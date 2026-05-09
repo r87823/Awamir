@@ -1,0 +1,28 @@
+{
+  "name": "awamir-plus",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Awamir Plus monorepo",
+  "packageManager": "pnpm@10.32.1",
+  "scripts": {
+    "lint": "pnpm -r --if-present lint && pnpm mobile:analyze",
+    "typecheck": "pnpm -r --if-present typecheck",
+    "test": "pnpm -r --if-present test && pnpm mobile:test",
+    "test:e2e": "pnpm --filter @awamir/api test:e2e",
+    "format": "pnpm -r --if-present format && dart format apps/mobile",
+    "mobile:analyze": "cd apps/mobile && flutter analyze",
+    "mobile:test": "cd apps/mobile && flutter test",
+    "api:dev": "pnpm --filter @awamir/api start:dev",
+    "prisma:generate": "pnpm --filter @awamir/api prisma:generate",
+    "prisma:migrate:dev": "pnpm --filter @awamir/api prisma:migrate:dev",
+    "db:seed": "pnpm --filter @awamir/api db:seed"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.39.1",
+    "@types/node": "^25.0.0",
+    "eslint": "^9.39.1",
+    "prettier": "^3.7.4",
+    "typescript": "^5.9.3",
+    "typescript-eslint": "^8.50.0"
+  }
+}

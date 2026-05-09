@@ -1,0 +1,595 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum ERPNextSyncOperation {
+  VALIDATE_CONNECTION
+  CREATE_SALES_ORDER
+  CREATE_DRAFT_SALES_INVOICE
+  SUBMIT_SALES_INVOICE
+  CREATE_DRAFT_PAYMENT_ENTRY
+  SUBMIT_PAYMENT_ENTRY
+}
+
+enum ERPNextSyncStatus {
+  PENDING
+  PROCESSING
+  SUCCEEDED
+  FAILED
+  DEAD_LETTER
+}
+
+enum OrderStatus {
+  DRAFT
+  PENDING_APPROVAL
+  APPROVED
+  REJECTED
+  RETURNED_FOR_EDIT
+  CANCELLED
+}
+
+enum ProductionStatus {
+  NOT_STARTED
+  IN_PROGRESS
+  DELAYED
+  COMPLETED
+  REJECTED
+}
+
+enum DeliveryStatus {
+  NOT_READY
+  READY_FOR_PACKING
+  READY
+  WAITING_BATCH
+  ADDED_TO_DELIVERY_BATCH
+  PICKED_UP
+  OUT_FOR_DELIVERY
+  DELIVERED
+  RETURNED
+}
+
+enum DeliveryBatchStatus {
+  CREATED
+  DRIVER_ASSIGNED
+  PICKED_UP
+  OUT_FOR_DELIVERY
+  PARTIALLY_DELIVERED
+  DELIVERED
+  RETURNED
+  CANCELLED
+}
+
+enum DeliveryBatchOrderStatus {
+  ADDED_TO_BATCH
+  PICKED_UP
+  OUT_FOR_DELIVERY
+  DELIVERED
+  RETURNED
+}
+
+enum OrderPaymentStatus {
+  UNPAID
+  PARTIALLY_PAID
+  PAID
+
+  @@map("PaymentStatus")
+}
+
+enum PaymentMethod {
+  CASH
+  CARD
+  TRANSFER
+  ONLINE
+  CREDIT
+}
+
+enum PaymentStatus {
+  DRAFT
+  COLLECTED
+  SUBMITTED_TO_CASHBOX
+  REVIEWED
+  PENDING_ERPNEXT_SYNC
+  POSTED
+  CANCELLED
+
+  @@map("PaymentRecordStatus")
+}
+
+enum PaymentCollectionSource {
+  BRANCH
+  DELIVERY
+}
+
+enum CashboxEntryStatus {
+  PENDING
+  SUBMITTED
+  REVIEWED
+  CANCELLED
+}
+
+enum CashboxStatus {
+  OPEN
+  SUBMITTED
+  UNDER_REVIEW
+  APPROVED
+  RETURNED
+  CLOSED
+}
+
+enum AccountingStatus {
+  NOT_POSTED
+  SALES_ORDER_PENDING_SYNC
+  SALES_ORDER_CREATED
+  DRAFT_INVOICE_PENDING_SYNC
+  DRAFT_INVOICE_CREATED
+  INVOICE_SUBMITTED
+  PAYMENT_PENDING_SYNC
+  PAYMENT_SUBMITTED
+  ACCOUNTING_POSTED
+  SYNC_FAILED
+}
+
+enum WorkOrderStatus {
+  OPEN
+  ACCEPTED
+  IN_PROGRESS
+  IN_PRODUCTION
+  DELAYED
+  COMPLETED
+  READY
+  REJECTED
+  CANCELLED
+}
+
+model Branch {
+  id                String             @id @default(uuid()) @db.Uuid
+  code              String             @unique @db.VarChar(64)
+  nameAr            String             @map("name_ar") @db.VarChar(160)
+  nameEn            String             @map("name_en") @db.VarChar(160)
+  isActive          Boolean            @default(true) @map("is_active")
+  deletedAt         DateTime?          @map("deleted_at")
+  version           Int                @default(1)
+  createdAt         DateTime           @default(now()) @map("created_at")
+  updatedAt         DateTime           @updatedAt @map("updated_at")
+  productionCenters ProductionCenter[]
+  orders            Order[]
+  destinationOrders Order[]            @relation("OrderDestinationBranch")
+  deliveryBatches   DeliveryBatch[]
+  workOrders        WorkOrder[]
+
+  @@map("branches")
+}
+
+model ProductionCenter {
+  id         String                  @id @default(uuid()) @db.Uuid
+  branchId   String                  @map("branch_id") @db.Uuid
+  code       String                  @db.VarChar(64)
+  nameAr     String                  @map("name_ar") @db.VarChar(160)
+  nameEn     String                  @map("name_en") @db.VarChar(160)
+  isActive   Boolean                 @default(true) @map("is_active")
+  deletedAt  DateTime?               @map("deleted_at")
+  version    Int                     @default(1)
+  createdAt  DateTime                @default(now()) @map("created_at")
+  updatedAt  DateTime                @updatedAt @map("updated_at")
+  branch     Branch                  @relation(fields: [branchId], references: [id])
+  mappings   ItemDepartmentMapping[]
+  workOrders WorkOrder[]
+
+  @@unique([branchId, code])
+  @@index([branchId, isActive])
+  @@map("production_centers")
+}
+
+model Department {
+  id         String                  @id @default(uuid()) @db.Uuid
+  code       String                  @unique @db.VarChar(64)
+  nameAr     String                  @map("name_ar") @db.VarChar(160)
+  nameEn     String                  @map("name_en") @db.VarChar(160)
+  isActive   Boolean                 @default(true) @map("is_active")
+  deletedAt  DateTime?               @map("deleted_at")
+  version    Int                     @default(1)
+  createdAt  DateTime                @default(now()) @map("created_at")
+  updatedAt  DateTime                @updatedAt @map("updated_at")
+  mappings   ItemDepartmentMapping[]
+  workOrders WorkOrder[]
+
+  @@index([isActive])
+  @@map("departments")
+}
+
+model Product {
+  id              String                  @id @default(uuid()) @db.Uuid
+  code            String                  @unique @db.VarChar(64)
+  nameAr          String                  @map("name_ar") @db.VarChar(200)
+  nameEn          String                  @map("name_en") @db.VarChar(200)
+  erpnextItemCode String                  @unique @map("erpnext_item_code") @db.VarChar(140)
+  itemGroup       String?                 @map("item_group") @db.VarChar(140)
+  stockUom        String?                 @map("stock_uom") @db.VarChar(64)
+  isStockItem     Boolean                 @default(true) @map("is_stock_item")
+  isActive        Boolean                 @default(true) @map("is_active")
+  deletedAt       DateTime?               @map("deleted_at")
+  version         Int                     @default(1)
+  createdAt       DateTime                @default(now()) @map("created_at")
+  updatedAt       DateTime                @updatedAt @map("updated_at")
+  mappings        ItemDepartmentMapping[]
+  orderItems      OrderItem[]
+
+  @@index([erpnextItemCode])
+  @@index([isActive])
+  @@map("products")
+}
+
+model Order {
+  id                       String               @id @default(uuid()) @db.Uuid
+  orderNumber              String               @unique @map("order_number") @db.VarChar(40)
+  branchId                 String               @map("branch_id") @db.Uuid
+  destinationBranchId      String?              @map("destination_branch_id") @db.Uuid
+  customerId               String?              @map("customer_id") @db.VarChar(120)
+  customerName             String               @map("customer_name") @db.VarChar(200)
+  customerPhone            String?              @map("customer_phone") @db.VarChar(40)
+  customerAddress          String?              @map("customer_address") @db.Text
+  status                   OrderStatus          @default(DRAFT)
+  productionStatus         ProductionStatus     @default(NOT_STARTED) @map("production_status")
+  deliveryStatus           DeliveryStatus       @default(NOT_READY) @map("delivery_status")
+  paymentStatus            OrderPaymentStatus   @default(UNPAID) @map("payment_status")
+  accountingStatus         AccountingStatus     @default(NOT_POSTED) @map("accounting_status")
+  erpnextSalesOrderId      String?              @map("erpnext_sales_order_id") @db.VarChar(160)
+  erpnextSalesInvoiceId    String?              @map("erpnext_sales_invoice_id") @db.VarChar(160)
+  salesOrderReviewedAt     DateTime?            @map("sales_order_reviewed_at")
+  salesOrderReviewedBy     String?              @map("sales_order_reviewed_by") @db.VarChar(160)
+  invoiceReviewedAt        DateTime?            @map("invoice_reviewed_at")
+  invoiceReviewedBy        String?              @map("invoice_reviewed_by") @db.VarChar(160)
+  packingRequired          Boolean              @default(false) @map("packing_required")
+  workflowSettingsSnapshot Json?                @map("workflow_settings_snapshot")
+  subtotal                 Decimal              @default(0) @db.Decimal(12, 2)
+  taxTotal                 Decimal              @default(0) @map("tax_total") @db.Decimal(12, 2)
+  discountTotal            Decimal              @default(0) @map("discount_total") @db.Decimal(12, 2)
+  grandTotal               Decimal              @default(0) @map("grand_total") @db.Decimal(12, 2)
+  paidAmount               Decimal              @default(0) @map("paid_amount") @db.Decimal(12, 2)
+  remainingAmount          Decimal              @default(0) @map("remaining_amount") @db.Decimal(12, 2)
+  notes                    String?              @db.Text
+  rejectionReason          String?              @map("rejection_reason") @db.Text
+  returnNotes              String?              @map("return_notes") @db.Text
+  submittedAt              DateTime?            @map("submitted_at")
+  approvedAt               DateTime?            @map("approved_at")
+  rejectedAt               DateTime?            @map("rejected_at")
+  returnedAt               DateTime?            @map("returned_at")
+  version                  Int                  @default(1)
+  deletedAt                DateTime?            @map("deleted_at")
+  createdAt                DateTime             @default(now()) @map("created_at")
+  updatedAt                DateTime             @updatedAt @map("updated_at")
+  branch                   Branch               @relation(fields: [branchId], references: [id])
+  destinationBranch        Branch?              @relation("OrderDestinationBranch", fields: [destinationBranchId], references: [id])
+  items                    OrderItem[]
+  workOrders               WorkOrder[]
+  deliveryBatchOrders      DeliveryBatchOrder[]
+  payments                 Payment[]
+  cashboxEntries           CashboxEntry[]
+
+  @@index([branchId, status, createdAt])
+  @@index([accountingStatus, createdAt])
+  @@index([destinationBranchId, deliveryStatus])
+  @@index([customerName])
+  @@map("orders")
+}
+
+model Payment {
+  id                String                  @id @default(uuid()) @db.Uuid
+  orderId           String                  @map("order_id") @db.Uuid
+  amount            Decimal                 @db.Decimal(12, 2)
+  method            PaymentMethod
+  status            PaymentStatus           @default(COLLECTED)
+  source            PaymentCollectionSource
+  idempotencyKey    String                  @unique @map("idempotency_key") @db.VarChar(260)
+  collectedByActorId String?                @map("collected_by_actor_id") @db.VarChar(160)
+  driverId          String?                 @map("driver_id") @db.VarChar(160)
+  erpnextPaymentEntryId String?             @map("erpnext_payment_entry_id") @db.VarChar(160)
+  reviewedAt        DateTime?               @map("reviewed_at")
+  reviewedBy        String?                 @map("reviewed_by") @db.VarChar(160)
+  notes             String?                 @db.Text
+  collectedAt       DateTime                @default(now()) @map("collected_at")
+  createdAt         DateTime                @default(now()) @map("created_at")
+  updatedAt         DateTime                @updatedAt @map("updated_at")
+  cancelledAt       DateTime?               @map("cancelled_at")
+  order             Order                   @relation(fields: [orderId], references: [id])
+  cashboxEntry      CashboxEntry?
+
+  @@index([orderId])
+  @@index([source, collectedByActorId])
+  @@index([driverId])
+  @@index([status])
+  @@index([reviewedAt])
+  @@map("payments")
+}
+
+model Cashbox {
+  id              String          @id @default(uuid()) @db.Uuid
+  collectorUserId String          @map("collector_user_id") @db.VarChar(160)
+  businessDate    DateTime        @map("business_date") @db.Date
+  status          CashboxStatus   @default(OPEN)
+  expectedCash    Decimal         @default(0) @map("expected_cash") @db.Decimal(12, 2)
+  collectedCash   Decimal?        @map("collected_cash") @db.Decimal(12, 2)
+  difference      Decimal?        @db.Decimal(12, 2)
+  notes           String?         @db.Text
+  returnReason    String?         @map("return_reason") @db.Text
+  submittedAt     DateTime?       @map("submitted_at")
+  reviewedAt      DateTime?       @map("reviewed_at")
+  approvedAt      DateTime?       @map("approved_at")
+  returnedAt      DateTime?       @map("returned_at")
+  closedAt        DateTime?       @map("closed_at")
+  version         Int             @default(1)
+  deletedAt       DateTime?       @map("deleted_at")
+  createdAt       DateTime        @default(now()) @map("created_at")
+  updatedAt       DateTime        @updatedAt @map("updated_at")
+  entries         CashboxEntry[]
+
+  @@unique([collectorUserId, businessDate])
+  @@index([businessDate, status])
+  @@index([collectorUserId, status])
+  @@map("cashboxes")
+}
+
+model CashboxEntry {
+  id        String             @id @default(uuid()) @db.Uuid
+  cashboxId String?            @map("cashbox_id") @db.Uuid
+  paymentId String             @unique @map("payment_id") @db.Uuid
+  orderId   String             @map("order_id") @db.Uuid
+  amount    Decimal            @db.Decimal(12, 2)
+  status    CashboxEntryStatus @default(PENDING)
+  createdAt DateTime           @default(now()) @map("created_at")
+  updatedAt DateTime           @updatedAt @map("updated_at")
+  cashbox   Cashbox?           @relation(fields: [cashboxId], references: [id])
+  payment   Payment            @relation(fields: [paymentId], references: [id])
+  order     Order              @relation(fields: [orderId], references: [id])
+
+  @@index([cashboxId, status])
+  @@index([orderId])
+  @@index([status])
+  @@map("pending_cashbox_entries")
+}
+
+model DeliveryBatch {
+  id                  String               @id @default(uuid()) @db.Uuid
+  batchNumber         String               @unique @map("batch_number") @db.VarChar(50)
+  destinationBranchId String               @map("destination_branch_id") @db.Uuid
+  status              DeliveryBatchStatus  @default(CREATED)
+  driverId            String?              @map("driver_id") @db.VarChar(160)
+  idempotencyKey      String               @unique @map("idempotency_key") @db.VarChar(260)
+  assignedAt          DateTime?            @map("assigned_at")
+  createdAt           DateTime             @default(now()) @map("created_at")
+  updatedAt           DateTime             @updatedAt @map("updated_at")
+  deletedAt           DateTime?            @map("deleted_at")
+  destinationBranch   Branch               @relation(fields: [destinationBranchId], references: [id])
+  orders              DeliveryBatchOrder[]
+
+  @@index([destinationBranchId, status])
+  @@index([driverId, status])
+  @@map("delivery_batches")
+}
+
+model DeliveryBatchOrder {
+  id               String                   @id @default(uuid()) @db.Uuid
+  deliveryBatchId  String                   @map("delivery_batch_id") @db.Uuid
+  orderId          String                   @map("order_id") @db.Uuid
+  status           DeliveryBatchOrderStatus @default(ADDED_TO_BATCH)
+  receivedByName   String?                  @map("received_by_name") @db.VarChar(160)
+  deliveredAt      DateTime?                @map("delivered_at")
+  deliveryNotes    String?                  @map("delivery_notes") @db.Text
+  returnedAt       DateTime?                @map("returned_at")
+  returnReasonCode String?                  @map("return_reason_code") @db.VarChar(80)
+  returnNotes      String?                  @map("return_notes") @db.Text
+  createdAt        DateTime                 @default(now()) @map("created_at")
+  deliveryBatch    DeliveryBatch            @relation(fields: [deliveryBatchId], references: [id])
+  order            Order                    @relation(fields: [orderId], references: [id])
+
+  @@unique([deliveryBatchId, orderId])
+  @@unique([orderId])
+  @@index([deliveryBatchId])
+  @@index([status])
+  @@map("delivery_batch_orders")
+}
+
+model Notification {
+  id         String    @id @default(uuid()) @db.Uuid
+  type       String    @db.VarChar(120)
+  recipient  String?   @db.VarChar(160)
+  title      String    @db.VarChar(200)
+  body       String    @db.Text
+  entityType String    @map("entity_type") @db.VarChar(120)
+  entityId   String    @map("entity_id") @db.VarChar(160)
+  readAt     DateTime? @map("read_at")
+  createdAt  DateTime  @default(now()) @map("created_at")
+
+  @@index([entityType, entityId])
+  @@index([type])
+  @@map("notifications")
+}
+
+model OrderItem {
+  id              String          @id @default(uuid()) @db.Uuid
+  orderId         String          @map("order_id") @db.Uuid
+  productId       String          @map("product_id") @db.Uuid
+  erpnextItemCode String          @map("erpnext_item_code") @db.VarChar(140)
+  itemName        String          @map("item_name") @db.VarChar(200)
+  quantity        Decimal         @db.Decimal(12, 3)
+  unitPrice       Decimal         @map("unit_price") @db.Decimal(12, 2)
+  lineTotal       Decimal         @map("line_total") @db.Decimal(12, 2)
+  deletedAt       DateTime?       @map("deleted_at")
+  createdAt       DateTime        @default(now()) @map("created_at")
+  updatedAt       DateTime        @updatedAt @map("updated_at")
+  order           Order           @relation(fields: [orderId], references: [id])
+  product         Product         @relation(fields: [productId], references: [id])
+  workOrderItems  WorkOrderItem[]
+
+  @@index([orderId])
+  @@index([productId])
+  @@map("order_items")
+}
+
+model ItemDepartmentMapping {
+  id                 String            @id @default(uuid()) @db.Uuid
+  productId          String            @map("product_id") @db.Uuid
+  departmentId       String            @map("department_id") @db.Uuid
+  productionCenterId String?           @map("production_center_id") @db.Uuid
+  isActive           Boolean           @default(true) @map("is_active")
+  deletedAt          DateTime?         @map("deleted_at")
+  version            Int               @default(1)
+  createdAt          DateTime          @default(now()) @map("created_at")
+  updatedAt          DateTime          @updatedAt @map("updated_at")
+  product            Product           @relation(fields: [productId], references: [id])
+  department         Department        @relation(fields: [departmentId], references: [id])
+  productionCenter   ProductionCenter? @relation(fields: [productionCenterId], references: [id])
+
+  @@unique([productId, departmentId])
+  @@index([productId, isActive])
+  @@index([departmentId, isActive])
+  @@index([productionCenterId])
+  @@map("item_department_mappings")
+}
+
+model WorkOrder {
+  id                 String           @id @default(uuid()) @db.Uuid
+  orderId            String           @map("order_id") @db.Uuid
+  branchId           String           @map("branch_id") @db.Uuid
+  productionCenterId String           @map("production_center_id") @db.Uuid
+  departmentId       String           @map("department_id") @db.Uuid
+  status             WorkOrderStatus  @default(OPEN)
+  idempotencyKey     String           @unique @map("idempotency_key") @db.VarChar(260)
+  acceptedAt         DateTime?        @map("accepted_at")
+  startedAt          DateTime?        @map("started_at")
+  delayedAt          DateTime?        @map("delayed_at")
+  readyAt            DateTime?        @map("ready_at")
+  rejectedAt         DateTime?        @map("rejected_at")
+  delayReasonCode    String?          @map("delay_reason_code") @db.VarChar(80)
+  rejectReasonCode   String?          @map("reject_reason_code") @db.VarChar(80)
+  statusNotes        String?          @map("status_notes") @db.Text
+  createdAt          DateTime         @default(now()) @map("created_at")
+  updatedAt          DateTime         @updatedAt @map("updated_at")
+  deletedAt          DateTime?        @map("deleted_at")
+  order              Order            @relation(fields: [orderId], references: [id])
+  branch             Branch           @relation(fields: [branchId], references: [id])
+  productionCenter   ProductionCenter @relation(fields: [productionCenterId], references: [id])
+  department         Department       @relation(fields: [departmentId], references: [id])
+  items              WorkOrderItem[]
+
+  @@unique([orderId, productionCenterId, departmentId])
+  @@index([orderId])
+  @@index([productionCenterId, departmentId])
+  @@map("work_orders")
+}
+
+model WorkOrderItem {
+  id              String    @id @default(uuid()) @db.Uuid
+  workOrderId     String    @map("work_order_id") @db.Uuid
+  orderItemId     String    @map("order_item_id") @db.Uuid
+  productId       String    @map("product_id") @db.Uuid
+  erpnextItemCode String    @map("erpnext_item_code") @db.VarChar(140)
+  itemName        String    @map("item_name") @db.VarChar(200)
+  quantity        Decimal   @db.Decimal(12, 3)
+  createdAt       DateTime  @default(now()) @map("created_at")
+  updatedAt       DateTime  @updatedAt @map("updated_at")
+  deletedAt       DateTime? @map("deleted_at")
+  workOrder       WorkOrder @relation(fields: [workOrderId], references: [id])
+  orderItem       OrderItem @relation(fields: [orderItemId], references: [id])
+
+  @@index([workOrderId])
+  @@index([orderItemId])
+  @@map("work_order_items")
+}
+
+model AuditLog {
+  id         String   @id @default(uuid()) @db.Uuid
+  action     String   @db.VarChar(160)
+  actorId    String?  @map("actor_id") @db.VarChar(160)
+  entityType String   @map("entity_type") @db.VarChar(120)
+  entityId   String?  @map("entity_id") @db.VarChar(160)
+  payload    Json?
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  @@index([action])
+  @@index([entityType, entityId])
+  @@map("audit_logs")
+}
+
+model FinancialDayClose {
+  id                     String   @id @default(uuid()) @db.Uuid
+  businessDate           DateTime @unique @map("business_date") @db.Date
+  closedByActorId        String?  @map("closed_by_actor_id") @db.VarChar(160)
+  totalCash              Decimal  @default(0) @map("total_cash") @db.Decimal(12, 2)
+  totalPayments          Decimal  @default(0) @map("total_payments") @db.Decimal(12, 2)
+  approvedCashboxesCount Int      @default(0) @map("approved_cashboxes_count")
+  pendingCashboxesCount  Int      @default(0) @map("pending_cashboxes_count")
+  notes                  String?  @db.Text
+  createdAt              DateTime @default(now()) @map("created_at")
+  updatedAt              DateTime @updatedAt @map("updated_at")
+
+  @@map("financial_day_closes")
+}
+
+model ERPNextIntegrationConfig {
+  id              String    @id @default(uuid()) @db.Uuid
+  baseUrl         String    @map("base_url") @db.VarChar(500)
+  apiKey          String    @map("api_key") @db.VarChar(255)
+  apiSecretRef    String?   @map("api_secret_ref") @db.VarChar(255)
+  isActive        Boolean   @default(true) @map("is_active")
+  lastValidatedAt DateTime? @map("last_validated_at")
+  deletedAt       DateTime? @map("deleted_at")
+  version         Int       @default(1)
+  createdAt       DateTime  @default(now()) @map("created_at")
+  updatedAt       DateTime  @updatedAt @map("updated_at")
+
+  @@index([isActive])
+  @@map("erpnext_integration_configs")
+}
+
+model ERPNextSyncLog {
+  id              String               @id @default(uuid()) @db.Uuid
+  outboxId        String?              @map("outbox_id") @db.Uuid
+  operation       ERPNextSyncOperation
+  status          ERPNextSyncStatus
+  requestPayload  Json?                @map("request_payload")
+  responsePayload Json?                @map("response_payload")
+  correlationId   String?              @map("correlation_id") @db.VarChar(160)
+  errorCode       String?              @map("error_code") @db.VarChar(120)
+  errorMessage    String?              @map("error_message") @db.Text
+  startedAt       DateTime             @default(now()) @map("started_at")
+  completedAt     DateTime?            @map("completed_at")
+  createdAt       DateTime             @default(now()) @map("created_at")
+  outbox          IntegrationOutbox?   @relation(fields: [outboxId], references: [id])
+
+  @@index([outboxId])
+  @@index([status])
+  @@index([operation])
+  @@map("erpnext_sync_logs")
+}
+
+model IntegrationOutbox {
+  id             String               @id @default(uuid()) @db.Uuid
+  operation      ERPNextSyncOperation
+  idempotencyKey String               @unique @map("idempotency_key") @db.VarChar(220)
+  sourceType     String               @map("source_type") @db.VarChar(80)
+  sourceId       String               @map("source_id") @db.VarChar(120)
+  payload        Json?
+  status         ERPNextSyncStatus    @default(PENDING)
+  retryCount     Int                  @default(0) @map("retry_count")
+  nextRetryAt    DateTime             @default(now()) @map("next_retry_at")
+  lastAttemptAt  DateTime?            @map("last_attempt_at")
+  lockedAt       DateTime?            @map("locked_at")
+  lastError      String?              @map("last_error") @db.Text
+  correlationId  String?              @map("correlation_id") @db.VarChar(160)
+  erpnextDoctype String?              @map("erpnext_doctype") @db.VarChar(120)
+  erpnextName    String?              @map("erpnext_name") @db.VarChar(160)
+  createdAt      DateTime             @default(now()) @map("created_at")
+  updatedAt      DateTime             @updatedAt @map("updated_at")
+  logs           ERPNextSyncLog[]
+
+  @@index([status, nextRetryAt])
+  @@index([operation])
+  @@index([sourceType, sourceId])
+  @@map("integration_outbox")
+}
