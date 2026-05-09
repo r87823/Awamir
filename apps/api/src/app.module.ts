@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { AccountingModule } from './accounting/accounting.module';
+import { AuthModule } from './auth/auth.module';
 import { CashboxesModule } from './cashboxes/cashboxes.module';
 import { DeliveryModule } from './delivery/delivery.module';
 import { ERPNextModule } from './erpnext/erpnext.module';
@@ -14,6 +15,7 @@ import { PrismaModule } from './prisma/prisma.module';
 @Module({
   imports: [
     ObservabilityModule,
+    AuthModule,
     PrismaModule,
     MasterDataModule,
     DeliveryModule,

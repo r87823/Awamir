@@ -1,0 +1,86 @@
+import 'api_client.dart';
+import 'paged_response.dart';
+
+class BackendRepository {
+  const BackendRepository(this._api);
+
+  final AwamirApiClient _api;
+
+  Future<PagedResponse> orders({String? status}) async {
+    final query = <String, Object?>{};
+    if (status != null) {
+      query['status'] = status;
+    }
+    return PagedResponse.fromJson(await _api.get('/orders', query: query));
+  }
+
+  Future<Map<String, Object?>> order(String id) => _api.get('/orders/$id');
+
+  Future<Map<String, Object?>> createOrder(Map<String, Object?> body) {
+    return _api.post('/orders', data: body);
+  }
+
+  Future<Map<String, Object?>> submitOrder(String id) {
+    return _api.post('/orders/$id/submit-for-approval');
+  }
+
+  Future<Map<String, Object?>> approveOrder(String id) {
+    return _api.post('/orders/$id/approve');
+  }
+
+  Future<Map<String, Object?>> rejectOrder(String id, String reason) {
+    return _api.post('/orders/$id/reject', data: {'rejectionReason': reason});
+  }
+
+  Future<Map<String, Object?>> returnOrder(String id, String notes) {
+    return _api.post('/orders/$id/return-for-edit', data: {'notes': notes});
+  }
+
+  Future<PagedResponse> fulfillmentQueue() async {
+    return PagedResponse.fromJson(await _api.get('/fulfillment/queue'));
+  }
+
+  Future<PagedResponse> productionWorkOrders() async {
+    return PagedResponse.fromJson(
+      await _api.get('/fulfillment/production/work-orders'),
+    );
+  }
+
+  Future<Map<String, Object?>> workOrderAction(String id, String action) {
+    return _api.post('/fulfillment/work-orders/$id/$action');
+  }
+
+  Future<Map<String, Object?>> delayWorkOrder(String id, String reasonCode) {
+    return _api.post(
+      '/fulfillment/work-orders/$id/delay',
+      data: {'reasonCode': reasonCode},
+    );
+  }
+
+  Future<List<Map<String, Object?>>> driverBatches() async {
+    final response = await _api.get('/delivery/driver/batches');
+    return (response['data'] as List? ?? const [])
+        .whereType<Map>()
+        .map((item) => Map<String, Object?>.from(item))
+        .toList();
+  }
+
+  Future<Map<String, Object?>> batchAction(String id, String action) {
+    return _api.post('/delivery/driver/batches/$id/$action');
+  }
+
+  Future<Map<String, Object?>> collectPayment(Map<String, Object?> body) {
+    return _api.post('/payments/branch', data: body);
+  }
+
+  Future<Map<String, Object?>> cashboxToday() =>
+      _api.get('/cashboxes/my/today');
+
+  Future<Map<String, Object?>> submitCashbox(String id, num amount) {
+    return _api.post('/cashboxes/$id/submit', data: {'collectedCash': amount});
+  }
+
+  Future<Map<String, Object?>> accountingDashboard() {
+    return _api.get('/accounting/dashboard');
+  }
+}
