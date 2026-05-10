@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:awamir_plus_mobile/main.dart';
 import 'package:awamir_plus_mobile/src/core/api/api_error.dart';
 import 'package:awamir_plus_mobile/src/core/api/backend_repository.dart';
@@ -44,6 +46,37 @@ void main() {
     expect(error.code, 'FORBIDDEN');
     expect(error.supportMessage, contains('corr-test'));
   });
+
+  test(
+    'macOS debug session fallback stores session without secure storage',
+    () async {
+      final tempDir = await Directory.systemTemp.createTemp(
+        'awamir-session-store-test',
+      );
+      addTearDown(() => tempDir.delete(recursive: true));
+      final store = SecureSessionStore(
+        useDebugFallback: true,
+        debugFallback: FileDebugSessionStore(
+          file: File('${tempDir.path}/session.json'),
+        ),
+      );
+      const session = UserSession(
+        token: 'jwt-token',
+        actorId: 'actor',
+        displayName: 'مستخدم',
+        permissions: {'orders:view'},
+        branchIds: ['branch-1'],
+      );
+
+      await store.write(session);
+      final saved = await store.read();
+      await store.clear();
+
+      expect(saved?.token, 'jwt-token');
+      expect(saved?.branchIds, ['branch-1']);
+      expect(await store.read(), isNull);
+    },
+  );
 
   testWidgets('PermissionGuard hides unauthorized actions', (tester) async {
     final store = MemorySessionStore()
