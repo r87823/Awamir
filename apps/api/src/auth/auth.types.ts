@@ -3,9 +3,10 @@ export type LoginDto = {
   password?: string;
 };
 
-export type MvpSessionUser = {
+export type SessionUser = {
   actorId: string;
   branchId?: string;
+  branchIds: string[];
   driverId?: string;
   departmentIds: string[];
   permissions: string[];
@@ -14,5 +15,5 @@ export type MvpSessionUser = {
 
 export type LoginResponse = {
   token: string;
-  user: MvpSessionUser;
+  user: SessionUser;
 };

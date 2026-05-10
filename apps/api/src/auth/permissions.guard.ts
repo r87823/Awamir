@@ -6,6 +6,7 @@ import {
 } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import { Request } from 'express';
+import { bearerToken, verifyAuthToken } from './jwt';
 import { REQUIRED_PERMISSIONS_KEY } from './permissions.decorator';
 
 @Injectable()
@@ -23,7 +24,7 @@ export class PermissionsGuard implements CanActivate {
     }
 
     const request = context.switchToHttp().getRequest<Request>();
-    const permissions = parsePermissions(request.headers['x-permissions']);
+    const permissions = permissionsFromRequest(request);
     const allowed = required.every((permission) => permissions.has(permission));
 
     if (!allowed) {
@@ -36,6 +37,28 @@ export class PermissionsGuard implements CanActivate {
 
     return true;
   }
+}
+
+function permissionsFromRequest(request: Request): Set<string> {
+  const tokenPayload = verifyAuthToken(
+    bearerToken(request.headers.authorization),
+  );
+  if (tokenPayload) {
+    return new Set(tokenPayload.permissions);
+  }
+
+  if (!legacyPermissionHeadersAllowed()) {
+    return new Set();
+  }
+
+  return parsePermissions(request.headers['x-permissions']);
+}
+
+function legacyPermissionHeadersAllowed() {
+  return (
+    process.env.AUTH_ALLOW_LEGACY_HEADERS === 'true' ||
+    process.env.NODE_ENV === 'test'
+  );
 }
 
 function parsePermissions(value: Request['headers'][string]): Set<string> {

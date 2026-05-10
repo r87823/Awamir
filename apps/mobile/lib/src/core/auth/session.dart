@@ -5,6 +5,7 @@ class UserSession {
     required this.displayName,
     required this.permissions,
     this.branchId,
+    this.branchIds = const [],
     this.driverId,
     this.departmentIds = const [],
   });
@@ -14,6 +15,7 @@ class UserSession {
   final String displayName;
   final Set<String> permissions;
   final String? branchId;
+  final List<String> branchIds;
   final String? driverId;
   final List<String> departmentIds;
 
@@ -29,6 +31,9 @@ class UserSession {
       actorId: user['actorId']?.toString() ?? '',
       displayName: user['displayName']?.toString() ?? 'مستخدم',
       branchId: user['branchId']?.toString(),
+      branchIds: (user['branchIds'] as List? ?? const [])
+          .map((item) => item.toString())
+          .toList(),
       driverId: user['driverId']?.toString(),
       permissions: (user['permissions'] as List? ?? const [])
           .map((item) => item.toString())
@@ -45,6 +50,7 @@ class UserSession {
       'actorId': actorId,
       'displayName': displayName,
       'branchId': branchId,
+      'branchIds': branchIds,
       'driverId': driverId,
       'permissions': permissions.toList(),
       'departmentIds': departmentIds,

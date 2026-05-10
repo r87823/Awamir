@@ -1,145 +1,145 @@
-import { BadRequestException, Injectable } from '@nestjs/common';
-import { LoginDto, LoginResponse, MvpSessionUser } from './auth.types';
-
-const allOperationalPermissions = [
-  'orders:view',
-  'orders:view_branch',
-  'orders:create',
-  'orders:update',
-  'orders:submit',
-  'orders:approve',
-  'orders:reject',
-  'orders:return_for_edit',
-  'fulfillment_coordinator',
-  'fulfillment:split',
-  'production_operator',
-  'packing:pack',
-  'delivery:batch_create',
-  'delivery:assign_driver',
-  'delivery_driver',
-  'payment.collect_branch',
-  'payment.collect_delivery',
-  'payment.view_own',
-  'payment.view_all',
-  'cashbox.view_own',
-  'cashbox.view_all',
-  'cashbox.submit',
-  'cashbox.review',
-  'cashbox.approve',
-  'cashbox.return',
-  'cashbox.close_day',
-  'accounting.view_financials',
-  'accounting.review_sales_order',
-  'accounting.submit_sales_order',
-  'accounting.review_invoice',
-  'accounting.submit_invoice',
-  'accounting.review_payment',
-  'accounting.submit_payment',
-  'accounting.reconcile_payments',
-  'accounting.close_financial_day',
-  'erpnext.view_sync_logs',
-  'erpnext.retry_sync',
-  'master-data:manage',
-  'notifications:view',
-  'notifications:read',
-];
-
-const users: Record<string, MvpSessionUser> = {
-  operator: {
-    actorId: 'mvp-operator',
-    branchId: process.env.MVP_BRANCH_ID,
-    departmentIds: [],
-    displayName: 'مشغل الفرع',
-    permissions: [
-      'orders:view',
-      'orders:view_branch',
-      'orders:create',
-      'orders:update',
-      'orders:submit',
-      'payment.collect_branch',
-      'payment.view_own',
-      'cashbox.view_own',
-      'cashbox.submit',
-      'notifications:view',
-      'notifications:read',
-    ],
-  },
-  supervisor: {
-    actorId: 'mvp-supervisor',
-    branchId: process.env.MVP_BRANCH_ID,
-    departmentIds: [],
-    displayName: 'مشرف الفرع',
-    permissions: [
-      'orders:view',
-      'orders:view_branch',
-      'orders:approve',
-      'orders:reject',
-      'orders:return_for_edit',
-      'notifications:view',
-      'notifications:read',
-    ],
-  },
-  production: {
-    actorId: 'mvp-production',
-    branchId: process.env.MVP_BRANCH_ID,
-    departmentIds: optionalCsv(process.env.MVP_DEPARTMENT_IDS),
-    displayName: 'مشغل الإنتاج',
-    permissions: ['production_operator'],
-  },
-  driver: {
-    actorId: 'mvp-driver-actor',
-    driverId: 'mvp-driver',
-    departmentIds: [],
-    displayName: 'السائق',
-    permissions: [
-      'delivery_driver',
-      'payment.collect_delivery',
-      'payment.view_own',
-      'notifications:view',
-      'notifications:read',
-    ],
-  },
-  accountant: {
-    actorId: 'mvp-accountant',
-    departmentIds: [],
-    displayName: 'المحاسب',
-    permissions: [
-      'accounting.view_financials',
-      'notifications:view',
-      'notifications:read',
-    ],
-  },
-  admin: {
-    actorId: 'mvp-admin',
-    branchId: process.env.MVP_BRANCH_ID,
-    departmentIds: optionalCsv(process.env.MVP_DEPARTMENT_IDS),
-    displayName: 'مدير النظام',
-    permissions: allOperationalPermissions,
-  },
-};
+import {
+  BadRequestException,
+  ForbiddenException,
+  Injectable,
+} from '@nestjs/common';
+import { Prisma } from '@prisma/client';
+import bcrypt from 'bcryptjs';
+import { PrismaService } from '../prisma/prisma.service';
+import { LoginDto, LoginResponse, SessionUser } from './auth.types';
+import { signAuthToken } from './jwt';
 
 @Injectable()
 export class AuthService {
-  login(input: LoginDto): LoginResponse {
+  constructor(private readonly prisma: PrismaService) {}
+
+  async login(input: LoginDto): Promise<LoginResponse> {
     const username = input.username?.trim().toLowerCase();
-    if (!username || !users[username]) {
-      throw new BadRequestException({
-        code: 'INVALID_LOGIN',
-        message: 'Invalid username or password',
+    if (!username || !input.password) {
+      throw invalidLogin();
+    }
+
+    const user = await this.prisma.user.findUnique({
+      where: { username },
+      include: {
+        roles: {
+          include: {
+            role: {
+              include: {
+                permissions: {
+                  include: {
+                    permission: true,
+                  },
+                },
+              },
+            },
+          },
+        },
+        branchAccess: {
+          include: {
+            branch: true,
+          },
+        },
+        departmentAccess: {
+          include: {
+            department: true,
+          },
+        },
+      },
+    });
+
+    if (!user?.passwordHash || user.deletedAt) {
+      throw invalidLogin();
+    }
+
+    const passwordMatches = await bcrypt.compare(
+      input.password,
+      user.passwordHash,
+    );
+    if (!passwordMatches) {
+      throw invalidLogin();
+    }
+
+    if (!user.isActive) {
+      throw new ForbiddenException({
+        code: 'USER_INACTIVE',
+        message: 'User is inactive',
       });
     }
 
+    const sessionUser = toSessionUser(user);
     return {
-      token: `mvp-session:${username}`,
-      user: users[username],
+      token: signAuthToken({
+        sub: user.id,
+        username: user.username,
+        ...sessionUser,
+      }),
+      user: sessionUser,
     };
   }
 }
 
-function optionalCsv(value: string | undefined) {
-  if (!value) return [];
-  return value
-    .split(',')
-    .map((item) => item.trim())
-    .filter(Boolean);
+function invalidLogin() {
+  return new BadRequestException({
+    code: 'INVALID_LOGIN',
+    message: 'Invalid username or password',
+  });
 }
+
+function toSessionUser(user: AuthUserRecord): SessionUser {
+  const permissions = new Set<string>();
+  for (const userRole of user.roles) {
+    if (!userRole.role.isActive || userRole.role.deletedAt) continue;
+    for (const rolePermission of userRole.role.permissions) {
+      permissions.add(rolePermission.permission.code);
+    }
+  }
+
+  const branchIds = user.branchAccess
+    .filter((access) => access.branch.isActive && !access.branch.deletedAt)
+    .map((access) => access.branchId);
+
+  const departmentIds = user.departmentAccess
+    .filter(
+      (access) => access.department.isActive && !access.department.deletedAt,
+    )
+    .map((access) => access.departmentId);
+
+  return {
+    actorId: user.id,
+    displayName: user.displayName,
+    branchId: branchIds[0],
+    branchIds,
+    driverId: user.driverId ?? undefined,
+    departmentIds,
+    permissions: [...permissions].sort(),
+  };
+}
+
+type AuthUserRecord = Prisma.UserGetPayload<{
+  include: {
+    roles: {
+      include: {
+        role: {
+          include: {
+            permissions: {
+              include: {
+                permission: true;
+              };
+            };
+          };
+        };
+      };
+    };
+    branchAccess: {
+      include: {
+        branch: true;
+      };
+    };
+    departmentAccess: {
+      include: {
+        department: true;
+      };
+    };
+  };
+}>;
