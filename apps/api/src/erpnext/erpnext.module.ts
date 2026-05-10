@@ -16,6 +16,6 @@ import { ERPNextSyncWorker } from './erpnext-sync.worker';
     ERPNextSyncService,
     ERPNextSyncWorker,
   ],
-  exports: [ERPNextSyncService],
+  exports: [ERPNextSyncService, ERPNextClient, ERPNextConfigService],
 })
 export class ERPNextModule {}

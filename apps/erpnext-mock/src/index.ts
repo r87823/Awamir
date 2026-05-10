@@ -7,18 +7,22 @@ import {
 
 type MockOptions = {
   failDocuments?: boolean;
+  delayMs?: number;
+  duplicateDocuments?: boolean;
 };
 
 export type ERPNextMockServer = {
   baseUrl: string;
   close: () => Promise<void>;
   documentCreateCount: () => number;
+  lastRequestBodies: () => unknown[];
 };
 
 export async function startERPNextMock(
   options: MockOptions = {},
 ): Promise<ERPNextMockServer> {
   const idempotencyKeys = new Set<string>();
+  const bodies: unknown[] = [];
   let documentCount = 0;
 
   const server = createServer(async (request, response) => {
@@ -26,10 +30,10 @@ export async function startERPNextMock(
       return json(response, 200, { message: 'pong' });
     }
 
-    if (
-      request.url === '/api/resource/Awamir%20Placeholder' &&
-      request.method === 'POST'
-    ) {
+    if (request.method === 'POST' && isDocumentCreatePath(request.url)) {
+      if (options.delayMs) {
+        await delay(options.delayMs);
+      }
       if (options.failDocuments) {
         return json(response, 500, {
           exc_type: 'MockERPNextFailure',
@@ -47,10 +51,27 @@ export async function startERPNextMock(
         documentCount += 1;
       }
 
-      await readBody(request);
+      bodies.push(parseBody(await readBody(request)));
+      if (options.duplicateDocuments) {
+        return json(response, 409, {
+          exc_type: 'DuplicateEntryError',
+          exception: 'Duplicate document',
+        });
+      }
+
       return json(response, 200, {
         data: { name: `MOCK-${documentCount}` },
         authorization: 'must-not-leak',
+      });
+    }
+
+    if (
+      request.url === '/api/method/frappe.client.submit' &&
+      request.method === 'POST'
+    ) {
+      bodies.push(parseBody(await readBody(request)));
+      return json(response, 200, {
+        data: { name: `MOCK-SUBMITTED-${documentCount || 1}` },
       });
     }
 
@@ -70,6 +91,7 @@ export async function startERPNextMock(
         server.close((error) => (error ? reject(error) : resolve()));
       }),
     documentCreateCount: () => documentCount,
+    lastRequestBodies: () => bodies,
   };
 }
 
@@ -94,4 +116,26 @@ function readBody(request: IncomingMessage) {
     request.on('end', () => resolve(body));
     request.on('error', reject);
   });
+}
+
+function isDocumentCreatePath(url: string | undefined) {
+  const normalized = decodeURIComponent(url ?? '');
+  return [
+    '/api/resource/Awamir Placeholder',
+    '/api/resource/Sales Order',
+    '/api/resource/Sales Invoice',
+    '/api/resource/Payment Entry',
+  ].includes(normalized);
+}
+
+function parseBody(raw: string) {
+  try {
+    return JSON.parse(raw) as unknown;
+  } catch {
+    return raw;
+  }
+}
+
+function delay(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
