@@ -5,9 +5,43 @@ on:
     branches: [main, develop]
   pull_request:
 
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   test:
     runs-on: ubuntu-latest
+
+    env:
+      DATABASE_URL: postgresql://awamir:awamir@localhost:5432/awamir_test
+      REDIS_URL: redis://localhost:6379
+      ERPNEXT_WORKER_ENABLED: "false"
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: awamir
+          POSTGRES_PASSWORD: awamir
+          POSTGRES_DB: awamir_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U awamir -d awamir_test"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+      redis:
+        image: redis:7
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
 
     steps:
       - name: Checkout
@@ -23,6 +57,7 @@ jobs:
         with:
           node-version: 20
           cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
 
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
@@ -34,6 +69,9 @@ jobs:
 
       - name: Generate Prisma Client
         run: pnpm prisma:generate
+
+      - name: Run Prisma migrations
+        run: pnpm prisma:migrate:deploy
 
       - name: Lint
         run: pnpm lint
