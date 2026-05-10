@@ -71,7 +71,7 @@ jobs:
         run: pnpm prisma:generate
 
       - name: Run Prisma migrations
-        run: pnpm prisma:migrate:deploy
+        run: pnpm prisma:migrate:dev
 
       - name: Lint
         run: pnpm lint
