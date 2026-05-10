@@ -12,8 +12,10 @@ import { AuditService } from '../audit/audit.service';
 import { DomainEventBus } from '../domain-events/domain-event-bus';
 import { domainEvent } from '../domain-events/domain-event.types';
 import { RequestContextService } from '../observability/request-context.service';
+import { StructuredLogger } from '../observability/structured-logger.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { ERPNextClient } from './erpnext.client';
+import { ERPNextConfigService } from './erpnext.config';
 import {
   draftPaymentEntryContract,
   draftSalesInvoiceContract,
@@ -21,16 +23,29 @@ import {
   submitPaymentEntryContract,
   submitSalesInvoiceContract,
 } from './erpnext.contracts';
+import {
+  ERPNextSyncValidationError,
+  buildDraftPaymentEntryRequest,
+  buildDraftSalesInvoiceRequest,
+  buildSalesOrderRequest,
+  buildSubmitDocumentRequest,
+} from './erpnext.mapper';
 import { redactERPNextPayload } from './erpnext-redaction';
-import { ERPNextResponse, PlaceholderSyncContract } from './erpnext.types';
+import {
+  ERPNextPreparedRequest,
+  ERPNextResponse,
+  PlaceholderSyncContract,
+} from './erpnext.types';
 
 @Injectable()
 export class ERPNextSyncService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly client: ERPNextClient,
+    private readonly configService?: ERPNextConfigService,
     private readonly audit?: AuditService,
     private readonly events?: DomainEventBus,
+    private readonly logger?: StructuredLogger,
     @Optional() private readonly requestContext?: RequestContextService,
   ) {}
 
@@ -194,25 +209,26 @@ export class ERPNextSyncService {
   }
 
   private async sendLockedOutbox(outbox: IntegrationOutbox) {
-    const requestPayload = {
-      method: 'POST',
-      path: '/api/resource/Awamir Placeholder',
-      idempotencyKey: outbox.idempotencyKey,
-      body: outbox.payload,
-    };
-
     const startedAt = new Date();
+    let requestPayload: Record<string, unknown> = {
+      operation: outbox.operation,
+      idempotencyKey: outbox.idempotencyKey,
+      sourceType: outbox.sourceType,
+      sourceId: outbox.sourceId,
+    };
     try {
+      const idempotentSuccess = await this.localReferenceSuccess(outbox);
+      if (idempotentSuccess) {
+        return idempotentSuccess;
+      }
+
+      const prepared = await this.prepareERPNextRequest(outbox);
+      requestPayload = prepared.requestPayload;
       const response = await this.client.request({
-        method: 'POST',
-        path: '/api/resource/Awamir Placeholder',
+        method: prepared.method,
+        path: prepared.path,
         idempotencyKey: outbox.idempotencyKey,
-        body: {
-          operation: outbox.operation,
-          source_type: outbox.sourceType,
-          source_id: outbox.sourceId,
-          payload: outbox.payload,
-        },
+        body: prepared.body,
       });
 
       if (!response.ok) {
@@ -222,7 +238,10 @@ export class ERPNextSyncService {
           response,
           startedAt,
         );
-        return this.markFailed(outbox, `HTTP_${response.status}`);
+        return this.markFailed(
+          outbox,
+          response.errorCode ?? `HTTP_${response.status}`,
+        );
       }
 
       await this.prisma.eRPNextSyncLog.create({
@@ -268,6 +287,25 @@ export class ERPNextSyncService {
       );
       return updated;
     } catch (error: unknown) {
+      if (error instanceof ERPNextSyncValidationError) {
+        await this.prisma.eRPNextSyncLog.create({
+          data: {
+            outboxId: outbox.id,
+            operation: outbox.operation,
+            status: ERPNextSyncStatus.FAILED,
+            correlationId: outbox.correlationId,
+            requestPayload: redactERPNextPayload(
+              requestPayload,
+            ) as Prisma.InputJsonValue,
+            responsePayload: Prisma.JsonNull,
+            errorCode: error.code,
+            errorMessage: error.message,
+            startedAt,
+            completedAt: new Date(),
+          },
+        });
+        return this.markFailed(outbox, error.code);
+      }
       const message =
         error instanceof Error ? error.message : 'Unknown ERPNext error';
       await this.prisma.eRPNextSyncLog.create({
@@ -280,7 +318,7 @@ export class ERPNextSyncService {
             requestPayload,
           ) as Prisma.InputJsonValue,
           responsePayload: Prisma.JsonNull,
-          errorCode: 'ERPNEXT_REQUEST_FAILED',
+          errorCode: 'connection_failed',
           errorMessage: message,
           startedAt,
           completedAt: new Date(),
@@ -309,8 +347,12 @@ export class ERPNextSyncService {
         responsePayload: redactERPNextPayload(
           response.body,
         ) as Prisma.InputJsonValue,
-        errorCode: `HTTP_${response.status}`,
-        errorMessage: 'ERPNext request failed',
+        errorCode: response.errorCode ?? `HTTP_${response.status}`,
+        errorMessage:
+          response.errorMessage ??
+          (response.errorCode
+            ? `ERPNext ${response.errorCode}`
+            : 'ERPNext request failed'),
         startedAt,
         completedAt: new Date(),
       },
@@ -459,6 +501,196 @@ export class ERPNextSyncService {
 
   private currentCorrelationId() {
     return this.requestContext?.correlationId() ?? randomUUID();
+  }
+
+  private async prepareERPNextRequest(
+    outbox: IntegrationOutbox,
+  ): Promise<ERPNextPreparedRequest> {
+    const config = this.configService?.validateRequiredForSync() ?? {
+      baseUrl: process.env.ERPNEXT_BASE_URL ?? 'http://127.0.0.1:0',
+      apiKey: process.env.ERPNEXT_API_KEY ?? 'dev-key',
+      apiSecret: process.env.ERPNEXT_API_SECRET ?? 'dev-secret',
+      company: process.env.ERPNEXT_COMPANY ?? 'Awamir Plus',
+      timeoutMs: Number(process.env.ERPNEXT_TIMEOUT_MS ?? 5000),
+      defaultCustomer: process.env.ERPNEXT_DEFAULT_CUSTOMER,
+      defaultWarehouse: process.env.ERPNEXT_DEFAULT_WAREHOUSE,
+      receivableAccount: process.env.ERPNEXT_RECEIVABLE_ACCOUNT,
+      incomeAccount: process.env.ERPNEXT_INCOME_ACCOUNT,
+      cashAccount: process.env.ERPNEXT_CASH_ACCOUNT,
+      cardAccount: process.env.ERPNEXT_CARD_ACCOUNT,
+      transferAccount: process.env.ERPNEXT_TRANSFER_ACCOUNT,
+      onlineAccount: process.env.ERPNEXT_ONLINE_ACCOUNT,
+      creditAccount: process.env.ERPNEXT_CREDIT_ACCOUNT,
+    };
+
+    let prepared: Omit<ERPNextPreparedRequest, 'requestPayload'>;
+    if (outbox.sourceType === 'order') {
+      const order = await this.prisma.order.findFirst({
+        where: { id: outbox.sourceId, deletedAt: null },
+        include: { items: true },
+      });
+      if (!order) {
+        throw new ERPNextSyncValidationError(
+          'validation_failed',
+          'Order is required for ERPNext sync',
+          { orderId: outbox.sourceId },
+        );
+      }
+      if (outbox.operation === ERPNextSyncOperation.CREATE_SALES_ORDER) {
+        prepared = buildSalesOrderRequest(order, config);
+      } else if (
+        outbox.operation === ERPNextSyncOperation.CREATE_DRAFT_SALES_INVOICE
+      ) {
+        prepared = buildDraftSalesInvoiceRequest(order, config);
+      } else if (
+        outbox.operation === ERPNextSyncOperation.SUBMIT_SALES_INVOICE
+      ) {
+        const invoiceName = order.erpnextSalesInvoiceId;
+        if (!invoiceName) {
+          throw new ERPNextSyncValidationError(
+            'validation_failed',
+            'ERPNext sales invoice reference is required before submit',
+          );
+        }
+        prepared = buildSubmitDocumentRequest('Sales Invoice', invoiceName);
+      } else {
+        throw new ERPNextSyncValidationError(
+          'validation_failed',
+          `Unsupported order sync operation ${outbox.operation}`,
+        );
+      }
+    } else if (outbox.sourceType === 'payment') {
+      const payment = await this.prisma.payment.findFirst({
+        where: { id: outbox.sourceId, cancelledAt: null },
+        include: { order: true },
+      });
+      if (!payment) {
+        throw new ERPNextSyncValidationError(
+          'validation_failed',
+          'Payment is required for ERPNext sync',
+          { paymentId: outbox.sourceId },
+        );
+      }
+      if (
+        outbox.operation === ERPNextSyncOperation.CREATE_DRAFT_PAYMENT_ENTRY
+      ) {
+        prepared = buildDraftPaymentEntryRequest(payment, config);
+      } else if (
+        outbox.operation === ERPNextSyncOperation.SUBMIT_PAYMENT_ENTRY
+      ) {
+        const paymentEntryName = payment.erpnextPaymentEntryId;
+        if (!paymentEntryName) {
+          throw new ERPNextSyncValidationError(
+            'validation_failed',
+            'ERPNext payment entry reference is required before submit',
+          );
+        }
+        prepared = buildSubmitDocumentRequest(
+          'Payment Entry',
+          paymentEntryName,
+        );
+      } else {
+        throw new ERPNextSyncValidationError(
+          'validation_failed',
+          `Unsupported payment sync operation ${outbox.operation}`,
+        );
+      }
+    } else {
+      throw new ERPNextSyncValidationError(
+        'validation_failed',
+        `Unsupported ERPNext source type ${outbox.sourceType}`,
+      );
+    }
+
+    return {
+      ...prepared,
+      requestPayload: {
+        method: prepared.method,
+        path: prepared.path,
+        idempotencyKey: outbox.idempotencyKey,
+        body: prepared.body,
+      },
+    };
+  }
+
+  private async localReferenceSuccess(outbox: IntegrationOutbox) {
+    const erpnextName = await this.localERPNextReference(outbox);
+    if (!erpnextName) return null;
+
+    this.logger?.log({
+      module: 'erpnext',
+      event: 'erpnext_outbox_idempotent_local_reference',
+      entityType: 'integration_outbox',
+      entityId: outbox.id,
+      status: 'SUCCEEDED',
+      details: {
+        operation: outbox.operation,
+        sourceType: outbox.sourceType,
+        sourceId: outbox.sourceId,
+      },
+    });
+
+    await this.prisma.eRPNextSyncLog.create({
+      data: {
+        outboxId: outbox.id,
+        operation: outbox.operation,
+        status: ERPNextSyncStatus.SUCCEEDED,
+        correlationId: outbox.correlationId,
+        requestPayload: {
+          idempotencyKey: outbox.idempotencyKey,
+          localReference: erpnextName,
+        },
+        responsePayload: { data: { name: erpnextName }, idempotent: true },
+        startedAt: new Date(),
+        completedAt: new Date(),
+      },
+    });
+
+    return this.prisma.integrationOutbox.update({
+      where: { id: outbox.id },
+      data: {
+        status: ERPNextSyncStatus.SUCCEEDED,
+        erpnextName,
+        lastError: null,
+        lockedAt: null,
+      },
+    });
+  }
+
+  private async localERPNextReference(outbox: IntegrationOutbox) {
+    if (outbox.sourceType === 'order') {
+      if (!isUuid(outbox.sourceId)) return null;
+      const order = await this.prisma.order.findUnique({
+        where: { id: outbox.sourceId },
+        select: {
+          erpnextSalesOrderId: true,
+          erpnextSalesInvoiceId: true,
+        },
+      });
+      if (!order) return null;
+      if (outbox.operation === ERPNextSyncOperation.CREATE_SALES_ORDER) {
+        return order.erpnextSalesOrderId;
+      }
+      if (
+        outbox.operation === ERPNextSyncOperation.CREATE_DRAFT_SALES_INVOICE
+      ) {
+        return order.erpnextSalesInvoiceId;
+      }
+    }
+    if (outbox.sourceType === 'payment') {
+      if (!isUuid(outbox.sourceId)) return null;
+      if (
+        outbox.operation !== ERPNextSyncOperation.CREATE_DRAFT_PAYMENT_ENTRY
+      ) {
+        return null;
+      }
+      const payment = await this.prisma.payment.findUnique({
+        where: { id: outbox.sourceId },
+        select: { erpnextPaymentEntryId: true },
+      });
+      return payment?.erpnextPaymentEntryId ?? null;
+    }
+    return null;
   }
 }
 

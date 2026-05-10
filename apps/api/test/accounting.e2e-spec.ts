@@ -24,6 +24,12 @@ describe('Accounting (e2e)', () => {
     process.env.ERPNEXT_WORKER_DISABLED = 'true';
     process.env.ERPNEXT_API_KEY = 'test-key';
     process.env.ERPNEXT_API_SECRET = 'test-secret';
+    process.env.ERPNEXT_COMPANY = 'Awamir Staging';
+    process.env.ERPNEXT_DEFAULT_CUSTOMER = 'CUST-STAGING';
+    process.env.ERPNEXT_DEFAULT_WAREHOUSE = 'Stores - AWS';
+    process.env.ERPNEXT_INCOME_ACCOUNT = 'Sales - AWS';
+    process.env.ERPNEXT_RECEIVABLE_ACCOUNT = 'Debtors - AWS';
+    process.env.ERPNEXT_CASH_ACCOUNT = 'Cash - AWS';
     mock = await startERPNextMock();
     process.env.ERPNEXT_BASE_URL = mock.baseUrl;
 
@@ -291,7 +297,7 @@ describe('Accounting (e2e)', () => {
       body: { api_secret: 'must-not-leak' },
     });
 
-    await syncService.processOutbox(sync.body.outbox.id, new Date());
+    await syncService.processOutbox(sync.body.outbox.id, dueNow());
 
     const updated = await prisma.order.findUniqueOrThrow({
       where: { id: order.id },
@@ -314,7 +320,7 @@ describe('Accounting (e2e)', () => {
       .set('x-actor-id', 'accountant-1')
       .expect(201);
 
-    await syncService.processOutbox(sync.body.outbox.id, new Date());
+    await syncService.processOutbox(sync.body.outbox.id, dueNow());
 
     const updated = await prisma.order.findUniqueOrThrow({
       where: { id: order.id },
@@ -379,17 +385,42 @@ function createAccountingOrder(
   suffix: string,
   overrides: { deliveryStatus?: 'READY' | 'DELIVERED' } = {},
 ) {
-  return prisma.order.create({
-    data: {
-      orderNumber: `ACC-${suffix}-${Math.random().toString(16).slice(2, 6)}`,
-      branchId,
-      destinationBranchId: branchId,
-      customerName: 'عميل محاسبة',
-      status: 'APPROVED',
-      deliveryStatus: overrides.deliveryStatus ?? 'NOT_READY',
-      grandTotal: 100,
-      remainingAmount: 100,
-    },
+  return prisma.$transaction(async (tx) => {
+    const product = await tx.product.create({
+      data: {
+        code: `ACC_${suffix}_${Math.random().toString(16).slice(2, 6)}`,
+        nameAr: 'منتج محاسبة',
+        nameEn: 'Accounting Product',
+        erpnextItemCode: `ERP-ACC-${suffix}-${Math.random()
+          .toString(16)
+          .slice(2, 6)}`,
+      },
+    });
+    return tx.order.create({
+      data: {
+        orderNumber: `ACC-${suffix}-${Math.random().toString(16).slice(2, 6)}`,
+        branchId,
+        destinationBranchId: branchId,
+        customerId: 'CUST-STAGING',
+        customerName: 'عميل محاسبة',
+        status: 'APPROVED',
+        deliveryStatus: overrides.deliveryStatus ?? 'NOT_READY',
+        grandTotal: 100,
+        remainingAmount: 100,
+        items: {
+          create: [
+            {
+              productId: product.id,
+              erpnextItemCode: product.erpnextItemCode,
+              itemName: product.nameAr,
+              quantity: 1,
+              unitPrice: 100,
+              lineTotal: 100,
+            },
+          ],
+        },
+      },
+    });
   });
 }
 
@@ -437,8 +468,14 @@ async function deleteAccountingTestData(prisma: PrismaService) {
   await prisma.cashboxEntry.deleteMany();
   await prisma.cashbox.deleteMany();
   await prisma.payment.deleteMany();
+  await prisma.orderItem.deleteMany({
+    where: { order: { orderNumber: { startsWith: 'ACC-' } } },
+  });
   await prisma.order.deleteMany({
     where: { orderNumber: { startsWith: 'ACC-' } },
+  });
+  await prisma.product.deleteMany({
+    where: { code: { startsWith: 'ACC_' } },
   });
   await prisma.branch.deleteMany({
     where: { code: { startsWith: 'ACC_' } },
@@ -469,4 +506,8 @@ function restoreOptionalEnv(name: string, value: string | undefined) {
     return;
   }
   process.env[name] = value;
+}
+
+function dueNow() {
+  return new Date(Date.now() + 1000);
 }

@@ -50,6 +50,8 @@ describe('ERPNextSyncService', () => {
       {} as never,
       undefined,
       undefined,
+      undefined,
+      undefined,
       requestContext as never,
     );
 
@@ -73,7 +75,29 @@ describe('ERPNextSyncService', () => {
       status: ERPNextSyncStatus.PENDING,
       nextRetryAt: new Date(0),
     };
+    const order = {
+      id: '2efadaca-1111-4111-8111-111111111111',
+      orderNumber: 'ORD-1',
+      customerId: 'CUST-1',
+      createdAt: new Date(),
+      erpnextSalesOrderId: null,
+      erpnextSalesInvoiceId: null,
+      items: [
+        {
+          id: 'item-1',
+          erpnextItemCode: 'ITEM-1',
+          itemName: 'Item 1',
+          quantity: 1,
+          unitPrice: 10,
+        },
+      ],
+    };
     const prisma = {
+      order: {
+        findFirst: jest.fn().mockResolvedValue(order),
+        findUnique: jest.fn().mockResolvedValue(null),
+        updateMany: jest.fn(),
+      },
       integrationOutbox: {
         findUnique: jest.fn().mockResolvedValue(outbox),
         findUniqueOrThrow: jest.fn().mockResolvedValue({
@@ -97,7 +121,21 @@ describe('ERPNextSyncService', () => {
         body: { api_secret: 'must-not-leak' },
       }),
     };
-    const service = new ERPNextSyncService(prisma as never, client as never);
+    const config = {
+      validateRequiredForSync: jest.fn().mockReturnValue({
+        baseUrl: 'http://erpnext.test',
+        apiKey: 'key',
+        apiSecret: 'secret',
+        company: 'Awamir',
+        timeoutMs: 5000,
+        defaultWarehouse: 'Stores - A',
+      }),
+    };
+    const service = new ERPNextSyncService(
+      prisma as never,
+      client as never,
+      config as never,
+    );
 
     await service.processOutbox(outbox.id, new Date());
 

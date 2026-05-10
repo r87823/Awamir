@@ -1,5 +1,6 @@
-import { Controller, Get } from '@nestjs/common';
+import { Controller, Get, Optional } from '@nestjs/common';
 import Redis from 'ioredis';
+import { ERPNextClient } from '../erpnext/erpnext.client';
 import { PrismaService } from '../prisma/prisma.service';
 
 type HealthResponse = {
@@ -10,7 +11,10 @@ type HealthResponse = {
 
 @Controller('health')
 export class HealthController {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    @Optional() private readonly erpnextClient?: ERPNextClient,
+  ) {}
 
   @Get()
   async getHealth(): Promise<HealthResponse> {
@@ -36,10 +40,11 @@ export class HealthController {
   }
 
   private async readinessChecks() {
-    const [db, redis, outbox] = await Promise.all([
+    const [db, redis, outbox, erpnext] = await Promise.all([
       this.dbStatus(),
       this.redisStatus(),
       this.outboxStatus(),
+      this.erpnextStatus(),
     ]);
 
     return {
@@ -52,6 +57,7 @@ export class HealthController {
             : 'disabled',
       },
       outbox,
+      erpnext,
     };
   }
 
@@ -100,6 +106,30 @@ export class HealthController {
     ]);
 
     return { status: 'ok', pending, failed, deadLetter };
+  }
+
+  private async erpnextStatus() {
+    if (!this.erpnextClient || process.env.ERPNEXT_HEALTH_ENABLED !== 'true') {
+      return { status: 'disabled' };
+    }
+
+    try {
+      const response = await this.erpnextClient.validateERPNextConnection();
+      return {
+        status: response.ok ? 'ok' : 'error',
+        httpStatus: response.status,
+        latencyMs: response.durationMs,
+        errorCode: response.errorCode,
+      };
+    } catch (error: unknown) {
+      return {
+        status: 'error',
+        message:
+          error instanceof Error
+            ? error.message
+            : 'ERPNext health check failed',
+      };
+    }
   }
 }
 
