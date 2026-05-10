@@ -8,6 +8,8 @@ import 'package:awamir_plus_mobile/src/core/auth/session.dart';
 import 'package:awamir_plus_mobile/src/core/auth/session_store.dart';
 import 'package:awamir_plus_mobile/src/core/providers.dart';
 import 'package:awamir_plus_mobile/src/core/routing/app_router.dart';
+import 'package:awamir_plus_mobile/src/features/dashboard/dashboard_screen.dart';
+import 'package:awamir_plus_mobile/src/features/notifications/notifications_screen.dart';
 import 'package:awamir_plus_mobile/src/features/orders/orders_list_screen.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -113,6 +115,60 @@ void main() {
     expect(find.text('ORD-1'), findsOneWidget);
     expect(find.textContaining('عميل'), findsOneWidget);
   });
+
+  testWidgets('dashboard shows unread notifications badge', (tester) async {
+    final auth = AuthController(MemorySessionStore());
+    await auth.setSession(
+      const UserSession(
+        token: 'token',
+        actorId: 'actor',
+        displayName: 'مستخدم',
+        permissions: {'notifications:view'},
+      ),
+    );
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          authControllerProvider.overrideWithValue(auth),
+          backendRepositoryProvider.overrideWithValue(
+            FakeNotificationsRepository(),
+          ),
+        ],
+        child: const MaterialApp(
+          home: Directionality(
+            textDirection: TextDirection.rtl,
+            child: DashboardScreen(),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('التنبيهات'), findsOneWidget);
+    expect(find.text('2'), findsOneWidget);
+  });
+
+  testWidgets('notifications screen lists and marks read', (tester) async {
+    final repo = FakeNotificationsRepository();
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [backendRepositoryProvider.overrideWithValue(repo)],
+        child: const MaterialApp(
+          home: Directionality(
+            textDirection: TextDirection.rtl,
+            child: NotificationsScreen(),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('تنبيه طلب'), findsOneWidget);
+    await tester.tap(find.byIcon(Icons.done));
+    await tester.pumpAndSettle();
+    expect(repo.markedRead, 'notif-1');
+    expect(find.text('تم تحديث التنبيه'), findsOneWidget);
+  });
 }
 
 class FakeOrdersRepository extends BackendRepository {
@@ -134,4 +190,43 @@ class FakeOrdersRepository extends BackendRepository {
       'total': 1,
     });
   }
+}
+
+class FakeNotificationsRepository extends FakeOrdersRepository {
+  String? markedRead;
+
+  @override
+  Future<int> unreadNotificationsCount() async => 2;
+
+  @override
+  Future<PagedResponse> notifications({
+    bool unreadOnly = false,
+    String? type,
+  }) async {
+    return PagedResponse.fromJson({
+      'data': [
+        {
+          'id': 'notif-1',
+          'type': 'ORDER_APPROVED',
+          'title': 'تنبيه طلب',
+          'body': 'تم تحديث الطلب',
+          'entityType': 'order',
+          'entityId': 'order-1',
+          'readAt': null,
+        },
+      ],
+      'page': 1,
+      'pageSize': 20,
+      'total': 1,
+    });
+  }
+
+  @override
+  Future<Map<String, Object?>> markNotificationRead(String id) async {
+    markedRead = id;
+    return {'id': id, 'readAt': DateTime.now().toIso8601String()};
+  }
+
+  @override
+  Future<int> markAllNotificationsRead() async => 1;
 }

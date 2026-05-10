@@ -7,6 +7,7 @@ import '../../features/dashboard/dashboard_screen.dart';
 import '../../features/delivery/driver_batches_screen.dart';
 import '../../features/fulfillment/fulfillment_queue_screen.dart';
 import '../../features/login/login_screen.dart';
+import '../../features/notifications/notifications_screen.dart';
 import '../../features/orders/create_order_screen.dart';
 import '../../features/orders/order_details_screen.dart';
 import '../../features/orders/orders_list_screen.dart';
@@ -78,6 +79,10 @@ GoRouter createAppRouter(AuthController auth) {
         path: '/accounting',
         builder: (context, state) => const AccountingDashboardScreen(),
       ),
+      GoRoute(
+        path: '/notifications',
+        builder: (context, state) => const NotificationsScreen(),
+      ),
     ],
   );
 }
@@ -92,4 +97,5 @@ const routePermissions = <String, List<String>>{
   '/payments': ['payment.collect_branch', 'payment.collect_delivery'],
   '/cashbox': ['cashbox.view_own'],
   '/accounting': ['accounting.view_financials'],
+  '/notifications': ['notifications:view'],
 };

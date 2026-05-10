@@ -31,6 +31,9 @@ class DashboardScreen extends ConsumerWidget {
       _Tile('المحاسبة', Icons.query_stats, '/accounting', [
         'accounting.view_financials',
       ]),
+      _Tile('التنبيهات', Icons.notifications, '/notifications', [
+        'notifications:view',
+      ], badge: true),
     ];
     return AwamirScaffold(
       title: 'لوحة التشغيل',
@@ -46,24 +49,7 @@ class DashboardScreen extends ConsumerWidget {
               for (final tile in tiles)
                 PermissionGuard(
                   permissions: tile.permissions,
-                  child: SizedBox(
-                    width: 170,
-                    child: Card(
-                      child: InkWell(
-                        onTap: () => context.go(tile.path),
-                        child: Padding(
-                          padding: const EdgeInsets.all(16),
-                          child: Column(
-                            children: [
-                              Icon(tile.icon),
-                              const SizedBox(height: 8),
-                              Text(tile.title, textAlign: TextAlign.center),
-                            ],
-                          ),
-                        ),
-                      ),
-                    ),
-                  ),
+                  child: _DashboardTile(tile: tile),
                 ),
             ],
           ),
@@ -73,10 +59,58 @@ class DashboardScreen extends ConsumerWidget {
   }
 }
 
+class _DashboardTile extends ConsumerWidget {
+  const _DashboardTile({required this.tile});
+
+  final _Tile tile;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final countFuture = tile.badge
+        ? ref.watch(backendRepositoryProvider).unreadNotificationsCount()
+        : Future.value(0);
+    return SizedBox(
+      width: 170,
+      child: Card(
+        child: InkWell(
+          onTap: () => context.go(tile.path),
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: FutureBuilder<int>(
+              future: countFuture,
+              builder: (context, snapshot) {
+                final count = snapshot.data ?? 0;
+                return Column(
+                  children: [
+                    Badge(
+                      isLabelVisible: tile.badge && count > 0,
+                      label: Text(count.toString()),
+                      child: Icon(tile.icon),
+                    ),
+                    const SizedBox(height: 8),
+                    Text(tile.title, textAlign: TextAlign.center),
+                  ],
+                );
+              },
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class _Tile {
-  const _Tile(this.title, this.icon, this.path, this.permissions);
+  const _Tile(
+    this.title,
+    this.icon,
+    this.path,
+    this.permissions, {
+    this.badge = false,
+  });
   final String title;
   final IconData icon;
   final String path;
   final List<String> permissions;
+  final bool badge;
 }
