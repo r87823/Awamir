@@ -40,6 +40,8 @@ const allOperationalPermissions = [
   'erpnext.view_sync_logs',
   'erpnext.retry_sync',
   'master-data:manage',
+  'notifications:view',
+  'notifications:read',
 ];
 
 const users: Record<string, MvpSessionUser> = {
@@ -58,6 +60,8 @@ const users: Record<string, MvpSessionUser> = {
       'payment.view_own',
       'cashbox.view_own',
       'cashbox.submit',
+      'notifications:view',
+      'notifications:read',
     ],
   },
   supervisor: {
@@ -71,6 +75,8 @@ const users: Record<string, MvpSessionUser> = {
       'orders:approve',
       'orders:reject',
       'orders:return_for_edit',
+      'notifications:view',
+      'notifications:read',
     ],
   },
   production: {
@@ -85,13 +91,23 @@ const users: Record<string, MvpSessionUser> = {
     driverId: 'mvp-driver',
     departmentIds: [],
     displayName: 'السائق',
-    permissions: ['delivery_driver', 'payment.collect_delivery', 'payment.view_own'],
+    permissions: [
+      'delivery_driver',
+      'payment.collect_delivery',
+      'payment.view_own',
+      'notifications:view',
+      'notifications:read',
+    ],
   },
   accountant: {
     actorId: 'mvp-accountant',
     departmentIds: [],
     displayName: 'المحاسب',
-    permissions: ['accounting.view_financials'],
+    permissions: [
+      'accounting.view_financials',
+      'notifications:view',
+      'notifications:read',
+    ],
   },
   admin: {
     actorId: 'mvp-admin',

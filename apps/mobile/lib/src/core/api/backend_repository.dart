@@ -83,4 +83,34 @@ class BackendRepository {
   Future<Map<String, Object?>> accountingDashboard() {
     return _api.get('/accounting/dashboard');
   }
+
+  Future<PagedResponse> notifications({
+    bool unreadOnly = false,
+    String? type,
+  }) async {
+    final query = <String, Object?>{};
+    if (unreadOnly) {
+      query['unreadOnly'] = 'true';
+    }
+    if (type != null && type.isNotEmpty) {
+      query['type'] = type;
+    }
+    return PagedResponse.fromJson(
+      await _api.get('/notifications', query: query),
+    );
+  }
+
+  Future<int> unreadNotificationsCount() async {
+    final response = await _api.get('/notifications/unread-count');
+    return intFrom(response['unreadCount']) ?? 0;
+  }
+
+  Future<Map<String, Object?>> markNotificationRead(String id) {
+    return _api.post('/notifications/$id/read');
+  }
+
+  Future<int> markAllNotificationsRead() async {
+    final response = await _api.post('/notifications/read-all');
+    return intFrom(response['updatedCount']) ?? 0;
+  }
 }
