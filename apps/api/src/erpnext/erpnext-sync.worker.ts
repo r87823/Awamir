@@ -1,5 +1,6 @@
 import { Injectable, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { Job, Queue, Worker } from 'bullmq';
+import { redisConnectionOptions } from '../common/redis-connection';
 import { ERPNextSyncService } from './erpnext-sync.service';
 
 const queueName = 'erpnext-sync';
@@ -16,7 +17,7 @@ export class ERPNextSyncWorker implements OnModuleInit, OnModuleDestroy {
       return;
     }
 
-    const connection = redisConnection();
+    const connection = redisConnectionOptions();
     this.queue = new Queue(queueName, { connection });
     this.worker = new Worker(queueName, (job) => this.handleJob(job), {
       connection,
@@ -39,12 +40,4 @@ export class ERPNextSyncWorker implements OnModuleInit, OnModuleDestroy {
 
     return this.syncService.processDueOutbox();
   }
-}
-
-function redisConnection() {
-  return {
-    host: process.env.REDIS_HOST ?? 'localhost',
-    port: Number(process.env.REDIS_PORT ?? 6379),
-    maxRetriesPerRequest: null,
-  };
 }

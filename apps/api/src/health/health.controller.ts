@@ -1,5 +1,6 @@
 import { Controller, Get, Optional } from '@nestjs/common';
 import Redis from 'ioredis';
+import { redisConnectionOptions } from '../common/redis-connection';
 import { ERPNextClient } from '../erpnext/erpnext.client';
 import { PrismaService } from '../prisma/prisma.service';
 
@@ -76,10 +77,8 @@ export class HealthController {
 
   private async redisStatus() {
     const redis = new Redis({
-      host: process.env.REDIS_HOST ?? 'localhost',
-      port: Number(process.env.REDIS_PORT ?? 6379),
+      ...redisConnectionOptions(),
       lazyConnect: true,
-      maxRetriesPerRequest: 0,
       connectTimeout: 500,
     });
     try {
