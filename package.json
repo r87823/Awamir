@@ -15,7 +15,12 @@
     "api:dev": "pnpm --filter @awamir/api start:dev",
     "prisma:generate": "pnpm --filter @awamir/api prisma:generate",
     "prisma:migrate:dev": "pnpm --filter @awamir/api prisma:migrate:dev",
-    "db:seed": "pnpm --filter @awamir/api db:seed"
+    "prisma:migrate:deploy": "pnpm --filter @awamir/api prisma:migrate:deploy",
+    "db:seed": "pnpm --filter @awamir/api db:seed",
+    "docker:build": "docker build -f apps/api/Dockerfile --target api -t awamir-plus-api:local .",
+    "docker:worker:build": "docker build -f apps/api/Dockerfile --target worker -t awamir-plus-worker:local .",
+    "docker:prod:up": "docker compose --env-file .env.staging -f docker-compose.prod.yml up -d",
+    "docker:prod:down": "docker compose --env-file .env.staging -f docker-compose.prod.yml down"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.1",
