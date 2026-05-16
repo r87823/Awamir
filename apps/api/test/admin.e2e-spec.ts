@@ -221,6 +221,75 @@ describe('Admin management foundation (e2e)', () => {
     expect(JSON.stringify(response.body)).not.toContain('short');
   });
 
+  it('reports credential hygiene warnings without exposing hashes', async () => {
+    const response = await request(app.getHttpServer())
+      .get('/admin/security/credential-hygiene')
+      .set('x-permissions', 'admin.users.view')
+      .expect(200);
+
+    expect(response.body).toEqual(
+      expect.objectContaining({
+        totalUsers: expect.any(Number),
+        flaggedUsers: expect.any(Number),
+        warnings: expect.any(Array),
+      }),
+    );
+    expect(response.body.warnings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          user: expect.objectContaining({ username: 'admin' }),
+          warnings: expect.arrayContaining([
+            expect.objectContaining({ code: 'WEAK_OR_DEMO_PASSWORD' }),
+          ]),
+        }),
+      ]),
+    );
+    expect(JSON.stringify(response.body)).not.toContain('passwordHash');
+  });
+
+  it('can force password rotation and clears it when password is updated', async () => {
+    const created = await request(app.getHttpServer())
+      .post('/admin/users')
+      .set('x-permissions', 'admin.users.manage')
+      .set('x-actor-id', 'admin-e2e')
+      .send({
+        username: 'admin_e2e_rotation_user',
+        password: 'secret123',
+        displayName: 'Rotation User',
+      })
+      .expect(201);
+
+    await request(app.getHttpServer())
+      .patch(`/admin/users/${created.body.id}`)
+      .set('x-permissions', 'admin.users.manage')
+      .set('x-actor-id', 'admin-e2e')
+      .send({ requirePasswordChange: true })
+      .expect(200)
+      .expect(({ body }) => expect(body.requirePasswordChange).toBe(true));
+
+    await request(app.getHttpServer())
+      .post('/auth/login')
+      .send({ username: 'admin_e2e_rotation_user', password: 'secret123' })
+      .expect(403)
+      .expect(({ body }) => expect(body.code).toBe('PASSWORD_CHANGE_REQUIRED'));
+
+    await request(app.getHttpServer())
+      .patch(`/admin/users/${created.body.id}`)
+      .set('x-permissions', 'admin.users.manage')
+      .set('x-actor-id', 'admin-e2e')
+      .send({ password: 'new-secret123' })
+      .expect(200)
+      .expect(({ body }) => {
+        expect(body.requirePasswordChange).toBe(false);
+        expect(body.passwordChangedAt).toEqual(expect.any(String));
+      });
+
+    await request(app.getHttpServer())
+      .post('/auth/login')
+      .send({ username: 'admin_e2e_rotation_user', password: 'new-secret123' })
+      .expect(201);
+  });
+
   it('lists roles and permissions, and assigns/removes roles', async () => {
     const user = await createAdminTestUser(prisma, 'role_target');
     const roles = await request(app.getHttpServer())

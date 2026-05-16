@@ -6,7 +6,9 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { AppSettingValueType, Prisma } from '@prisma/client';
+import bcrypt from 'bcryptjs';
 import { AuditService } from '../audit/audit.service';
+import { AuthRateLimiter } from '../auth/auth-rate-limiter.service';
 import { AuthService } from '../auth/auth.service';
 import { hashPassword } from '../auth/password-policy';
 import { normalizePagination } from '../common/pagination';
@@ -36,6 +38,7 @@ export class AdminService {
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
     private readonly auth: AuthService,
+    private readonly rateLimiter: AuthRateLimiter,
     private readonly erpnextSync: ERPNextSyncService,
   ) {}
 
@@ -85,6 +88,7 @@ export class AdminService {
   }
 
   async createUser(input: CreateAdminUserDto, actor: AdminActor) {
+    await this.throttleAdminSensitive(actor);
     const passwordHash = await hashPassword(input.password);
     const created = await this.prisma.$transaction(async (tx) => {
       const user = await tx.user.create({
@@ -93,6 +97,8 @@ export class AdminService {
           displayName: requiredString(input.displayName, 'displayName'),
           email: normalizedOptionalString(input.email),
           passwordHash,
+          passwordChangedAt: new Date(),
+          requirePasswordChange: input.requirePasswordChange ?? false,
           driverId: normalizedOptionalString(input.driverId),
           isActive: input.isActive ?? true,
         },
@@ -115,6 +121,9 @@ export class AdminService {
   }
 
   async updateUser(id: string, input: UpdateAdminUserDto, actor: AdminActor) {
+    if (isAdminSensitiveUserUpdate(input)) {
+      await this.throttleAdminSensitive(actor);
+    }
     await this.ensureUser(id);
     const data: Prisma.UserUpdateInput = {};
     if (input.username !== undefined)
@@ -129,8 +138,13 @@ export class AdminService {
     }
     if (input.isActive !== undefined) data.isActive = input.isActive;
     const passwordChanged = input.password !== undefined;
-    if (passwordChanged)
+    if (passwordChanged) {
       data.passwordHash = await hashPassword(input.password!);
+      data.passwordChangedAt = new Date();
+      data.requirePasswordChange = false;
+    } else if (input.requirePasswordChange !== undefined) {
+      data.requirePasswordChange = input.requirePasswordChange;
+    }
 
     const updated = await this.prisma.$transaction(async (tx) => {
       await tx.user.update({ where: { id }, data });
@@ -154,6 +168,14 @@ export class AdminService {
         actor.actorId,
       );
     }
+    if (input.requirePasswordChange === true && !passwordChanged) {
+      await this.auth.revokeSessionsForUser(
+        id,
+        'password_rotation_required',
+        'admin.user.password_rotation_required',
+        actor.actorId,
+      );
+    }
     return safeUser(updated);
   }
 
@@ -174,6 +196,7 @@ export class AdminService {
   }
 
   async deactivateUser(id: string, actor: AdminActor) {
+    await this.throttleAdminSensitive(actor);
     await this.ensureUser(id);
     if (id === actor.actorId) {
       await this.ensureNotFinalActivePlatformAdmin(id);
@@ -204,6 +227,7 @@ export class AdminService {
   }
 
   async revokeUserSessions(id: string, actor: AdminActor) {
+    await this.throttleAdminSensitive(actor);
     await this.ensureUser(id);
     await this.auth.revokeSessionsForUser(
       id,
@@ -212,6 +236,28 @@ export class AdminService {
       actor.actorId,
     );
     return this.auth.listSessionsForUserForAdmin(id);
+  }
+
+  async credentialHygieneReport() {
+    const users = await this.prisma.user.findMany({
+      where: { deletedAt: null },
+      orderBy: { username: 'asc' },
+      include: userInclude,
+    });
+    const warnings = (
+      await Promise.all(
+        users.map(async (user) => ({
+          user: safeUser(user),
+          warnings: await credentialWarnings(user),
+        })),
+      )
+    ).filter((entry) => entry.warnings.length > 0);
+    return {
+      checkedAt: new Date().toISOString(),
+      totalUsers: users.length,
+      flaggedUsers: warnings.length,
+      warnings,
+    };
   }
 
   async listRoles() {
@@ -241,6 +287,7 @@ export class AdminService {
     input: AssignUserRoleDto,
     actor: AdminActor,
   ) {
+    await this.throttleAdminSensitive(actor);
     await this.ensureUser(userId);
     await this.ensureRole(input.roleId);
     const assignment = await this.prisma.userRole.upsert({
@@ -260,6 +307,7 @@ export class AdminService {
   }
 
   async removeRole(userId: string, roleId: string, actor: AdminActor) {
+    await this.throttleAdminSensitive(actor);
     await this.ensureUser(userId);
     const role = await this.ensureRole(roleId);
     if (userId === actor.actorId && role.code === platformAdminRoleCode) {
@@ -464,6 +512,25 @@ export class AdminService {
       });
     }
   }
+
+  private async throttleAdminSensitive(actor: AdminActor) {
+    try {
+      await this.rateLimiter.consume({
+        ip: actor.ip,
+        username: actor.actorId ?? 'unknown-admin',
+        bucket: 'admin',
+        maxAttempts: Number(process.env.AUTH_ADMIN_RATE_LIMIT_MAX ?? 30),
+      });
+    } catch (error) {
+      await this.audit.record({
+        action: 'auth.rate_limited',
+        actorId: actor.actorId,
+        entityType: 'admin',
+        payload: { bucket: 'admin', ip: actor.ip ?? null },
+      });
+      throw error;
+    }
+  }
 }
 
 const userInclude = {
@@ -481,6 +548,8 @@ function safeUser(user: AdminUserRecord) {
     email: user.email,
     displayName: user.displayName,
     isActive: user.isActive,
+    requirePasswordChange: user.requirePasswordChange,
+    passwordChangedAt: user.passwordChangedAt,
     driverId: user.driverId,
     createdAt: user.createdAt,
     updatedAt: user.updatedAt,
@@ -575,6 +644,71 @@ function auditUserPayload(input: CreateAdminUserDto | UpdateAdminUserDto) {
   return Object.fromEntries(
     Object.entries(input).filter(([key]) => key !== 'password'),
   ) as Prisma.InputJsonObject;
+}
+
+function isAdminSensitiveUserUpdate(input: UpdateAdminUserDto) {
+  return (
+    input.password !== undefined ||
+    input.requirePasswordChange !== undefined ||
+    input.isActive !== undefined
+  );
+}
+
+async function credentialWarnings(user: AdminUserRecord) {
+  const warnings: Array<{
+    code: string;
+    severity: 'warning' | 'critical';
+    message: string;
+  }> = [];
+  if (!user.isActive) {
+    warnings.push({
+      code: 'INACTIVE_USER',
+      severity: 'warning',
+      message: 'User is inactive; confirm the account is still needed.',
+    });
+  }
+  if (user.requirePasswordChange) {
+    warnings.push({
+      code: 'PASSWORD_ROTATION_REQUIRED',
+      severity: 'warning',
+      message: 'User must receive a rotated password before login.',
+    });
+  }
+  if (!user.passwordChangedAt) {
+    warnings.push({
+      code: 'PASSWORD_CHANGE_DATE_MISSING',
+      severity: 'warning',
+      message: 'No password change timestamp is recorded.',
+    });
+  }
+  const weakCandidates = ['demo', 'password', 'secret123', user.username];
+  for (const candidate of weakCandidates) {
+    if (candidate && (await passwordMatches(candidate, user.passwordHash))) {
+      warnings.push({
+        code: 'WEAK_OR_DEMO_PASSWORD',
+        severity: 'critical',
+        message:
+          'Password matches a known demo or weak credential and should be rotated.',
+      });
+      break;
+    }
+  }
+  if (user.username === 'admin') {
+    warnings.push({
+      code: 'DEFAULT_ADMIN_USERNAME',
+      severity: 'warning',
+      message: 'Default admin username should be reviewed before production.',
+    });
+  }
+  return warnings;
+}
+
+async function passwordMatches(candidate: string, passwordHash: string) {
+  try {
+    return await bcrypt.compare(candidate, passwordHash);
+  } catch {
+    return false;
+  }
 }
 
 function serializeValidatedSettingValue(

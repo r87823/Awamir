@@ -29,6 +29,9 @@ describe('DB-backed auth (e2e)', () => {
   });
 
   afterEach(() => {
+    delete process.env.AUTH_RATE_LIMIT_MAX_ATTEMPTS;
+    delete process.env.AUTH_RATE_LIMIT_WINDOW_SECONDS;
+    delete process.env.AUTH_REFRESH_RATE_LIMIT_MAX;
     delete process.env.AUTH_LOGIN_RATE_LIMIT_MAX;
     delete process.env.AUTH_LOGIN_RATE_LIMIT_WINDOW_SECONDS;
     delete process.env.AUTH_REFRESH_TOKEN_TTL_DAYS;
@@ -226,6 +229,32 @@ describe('DB-backed auth (e2e)', () => {
     }
   });
 
+  it('rate limits repeated invalid refresh attempts', async () => {
+    process.env.AUTH_REFRESH_RATE_LIMIT_MAX = '2';
+    process.env.AUTH_RATE_LIMIT_WINDOW_SECONDS = '60';
+    const ip = `198.51.100.${Date.now() % 200}`;
+
+    await request(app.getHttpServer())
+      .post('/auth/refresh')
+      .set('x-forwarded-for', ip)
+      .send({ refreshToken: 'invalid-refresh-1' })
+      .expect(401);
+    await request(app.getHttpServer())
+      .post('/auth/refresh')
+      .set('x-forwarded-for', ip)
+      .send({ refreshToken: 'invalid-refresh-2' })
+      .expect(401);
+
+    const response = await request(app.getHttpServer())
+      .post('/auth/refresh')
+      .set('x-forwarded-for', ip)
+      .send({ refreshToken: 'invalid-refresh-3' })
+      .expect(429);
+
+    expect(response.body.code).toBe('AUTH_REFRESH_RATE_LIMITED');
+    expect(JSON.stringify(response.body)).not.toContain('invalid-refresh-3');
+  });
+
   it('rejects an invalid password', async () => {
     const response = await request(app.getHttpServer())
       .post('/auth/login')
@@ -242,23 +271,24 @@ describe('DB-backed auth (e2e)', () => {
   });
 
   it('rate limits repeated invalid login attempts without exposing secrets', async () => {
-    process.env.AUTH_LOGIN_RATE_LIMIT_MAX = '2';
-    process.env.AUTH_LOGIN_RATE_LIMIT_WINDOW_SECONDS = '60';
+    process.env.AUTH_RATE_LIMIT_MAX_ATTEMPTS = '2';
+    process.env.AUTH_RATE_LIMIT_WINDOW_SECONDS = '60';
+    const ip = `198.51.100.${Date.now() % 200}`;
 
     await request(app.getHttpServer())
       .post('/auth/login')
-      .set('x-forwarded-for', '198.51.100.24')
+      .set('x-forwarded-for', ip)
       .send({ username: 'admin', password: 'wrong1' })
       .expect(400);
     await request(app.getHttpServer())
       .post('/auth/login')
-      .set('x-forwarded-for', '198.51.100.24')
+      .set('x-forwarded-for', ip)
       .send({ username: 'admin', password: 'wrong2' })
       .expect(400);
 
     const response = await request(app.getHttpServer())
       .post('/auth/login')
-      .set('x-forwarded-for', '198.51.100.24')
+      .set('x-forwarded-for', ip)
       .send({ username: 'admin', password: 'wrong3' })
       .expect(429);
 

@@ -94,6 +94,12 @@ export class AdminController {
     return this.admin.listPermissions();
   }
 
+  @Get('security/credential-hygiene')
+  @RequirePermissions('admin.users.view')
+  credentialHygiene() {
+    return this.admin.credentialHygieneReport();
+  }
+
   @Post('users/:id/roles')
   @RequirePermissions('admin.roles.manage')
   assignUserRole(

@@ -42,18 +42,23 @@ export class AuthService {
   ): Promise<LoginResponse> {
     const username = input.username?.trim().toLowerCase();
     if (!username || !input.password) {
-      this.rateLimiter.recordFailure({ ip: options.ip, username });
+      await this.rateLimiter.recordFailure({ ip: options.ip, username });
       await this.auditLoginFailure(username, options.ip, 'missing_credentials');
       throw invalidLogin();
     }
     try {
-      this.rateLimiter.assertCanAttempt({ ip: options.ip, username });
+      await this.rateLimiter.assertCanAttempt({ ip: options.ip, username });
     } catch (error) {
       if (
         error instanceof HttpException &&
         error.getStatus() === HttpStatus.TOO_MANY_REQUESTS
       ) {
         await this.auditLoginFailure(username, options.ip, 'rate_limited');
+        await this.audit.record({
+          action: 'auth.rate_limited',
+          entityType: 'auth',
+          payload: { username, ip: options.ip ?? null, bucket: 'login' },
+        });
       }
       throw error;
     }
@@ -64,7 +69,7 @@ export class AuthService {
     });
 
     if (!user?.passwordHash || user.deletedAt) {
-      this.rateLimiter.recordFailure({ ip: options.ip, username });
+      await this.rateLimiter.recordFailure({ ip: options.ip, username });
       await this.auditLoginFailure(username, options.ip, 'invalid_credentials');
       throw invalidLogin();
     }
@@ -74,13 +79,13 @@ export class AuthService {
       user.passwordHash,
     );
     if (!passwordMatches) {
-      this.rateLimiter.recordFailure({ ip: options.ip, username });
+      await this.rateLimiter.recordFailure({ ip: options.ip, username });
       await this.auditLoginFailure(username, options.ip, 'invalid_credentials');
       throw invalidLogin();
     }
 
     if (!user.isActive) {
-      this.rateLimiter.recordFailure({ ip: options.ip, username });
+      await this.rateLimiter.recordFailure({ ip: options.ip, username });
       await this.auditLoginFailure(username, options.ip, 'inactive_user');
       throw new ForbiddenException({
         code: 'USER_INACTIVE',
@@ -88,7 +93,19 @@ export class AuthService {
       });
     }
 
-    this.rateLimiter.recordSuccess({ ip: options.ip, username });
+    if (user.requirePasswordChange) {
+      await this.auditLoginFailure(
+        username,
+        options.ip,
+        'password_change_required',
+      );
+      throw new ForbiddenException({
+        code: 'PASSWORD_CHANGE_REQUIRED',
+        message: 'Password change is required before login',
+      });
+    }
+
+    await this.rateLimiter.recordSuccess({ ip: options.ip, username });
     const sessionUser = toSessionUser(user);
     const refreshSession = await this.sessions.createSession({
       userId: user.id,
@@ -109,9 +126,40 @@ export class AuthService {
     input: RefreshTokenDto,
     options: { ip?: string; userAgent?: string } = {},
   ): Promise<LoginResponse> {
+    try {
+      await this.rateLimiter.assertCanAttempt({
+        ip: options.ip,
+        username: 'refresh',
+        bucket: 'refresh',
+      });
+    } catch (error) {
+      if (
+        error instanceof HttpException &&
+        error.getStatus() === HttpStatus.TOO_MANY_REQUESTS
+      ) {
+        await this.audit.record({
+          action: 'auth.refresh_rate_limited',
+          entityType: 'auth_session',
+          payload: { ip: options.ip ?? null },
+        });
+      }
+      throw error;
+    }
     const session = await this.sessions.findByRefreshToken(input.refreshToken);
-    if (!session) throw invalidRefreshToken();
+    if (!session) {
+      await this.rateLimiter.recordFailure({
+        ip: options.ip,
+        username: 'refresh',
+        bucket: 'refresh',
+      });
+      throw invalidRefreshToken();
+    }
     if (session.revokedAt) {
+      await this.rateLimiter.recordFailure({
+        ip: options.ip,
+        username: 'refresh',
+        bucket: 'refresh',
+      });
       await this.sessions.revokeActiveSessionsForUser({
         userId: session.userId,
         reason: 'refresh_reuse_detected',
@@ -129,6 +177,11 @@ export class AuthService {
       });
     }
     if (session.expiresAt <= new Date()) {
+      await this.rateLimiter.recordFailure({
+        ip: options.ip,
+        username: 'refresh',
+        bucket: 'refresh',
+      });
       await this.sessions.revokeSession(session.id, 'expired', {
         lastUsed: true,
       });
@@ -140,6 +193,11 @@ export class AuthService {
 
     const user = await this.loadActiveAuthUser(session.userId);
     if (!user) {
+      await this.rateLimiter.recordFailure({
+        ip: options.ip,
+        username: 'refresh',
+        bucket: 'refresh',
+      });
       await this.sessions.revokeSession(session.id, 'user_inactive', {
         lastUsed: true,
       });
@@ -148,6 +206,11 @@ export class AuthService {
         message: 'User is inactive',
       });
     }
+    await this.rateLimiter.recordSuccess({
+      ip: options.ip,
+      username: 'refresh',
+      bucket: 'refresh',
+    });
 
     const rotated = await this.sessions.rotateSession(session, {
       ip: options.ip,

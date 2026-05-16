@@ -7,6 +7,7 @@ import { PaginationInput } from '../common/pagination';
 
 export type AdminActor = {
   actorId?: string;
+  ip?: string;
 };
 
 export type AdminUsersQuery = PaginationInput & {
@@ -34,6 +35,7 @@ export type CreateAdminUserDto = {
   email?: string;
   driverId?: string;
   isActive?: boolean;
+  requirePasswordChange?: boolean;
   branchIds?: string[];
   departmentIds?: string[];
 };

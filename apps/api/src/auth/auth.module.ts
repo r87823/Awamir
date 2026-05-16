@@ -10,6 +10,6 @@ import { AuthService } from './auth.service';
   imports: [AuditModule, PrismaModule],
   controllers: [AuthController],
   providers: [AuthService, AuthRateLimiter, AuthSessionsService],
-  exports: [AuthService, AuthSessionsService],
+  exports: [AuthService, AuthSessionsService, AuthRateLimiter],
 })
 export class AuthModule {}
