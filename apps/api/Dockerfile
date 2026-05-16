@@ -28,6 +28,9 @@ COPY . .
 RUN pnpm --filter @awamir/api prisma:generate
 RUN pnpm --filter @awamir/api build
 RUN pnpm --filter @awamir/api deploy --legacy --prod /prod/api
+RUN cp apps/api/package.json /prod/api/package.json \
+  && mkdir -p /prod/api/dist/scripts \
+  && cp apps/api/dist/scripts/verify-erpnext-staging.js /prod/api/dist/scripts/verify-erpnext-staging.js
 RUN cd /prod/api && pnpm prisma:generate
 
 FROM base AS runtime
