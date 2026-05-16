@@ -38,12 +38,14 @@ ENV PORT=3000
 
 WORKDIR /app
 
-COPY --from=build /prod/api ./
+COPY --chown=node:node --from=build /prod/api ./
 
 EXPOSE 3000
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
   CMD node -e "const http=require('http');const req=http.get({host:'127.0.0.1',port:process.env.PORT||3000,path:'/health/live',timeout:3000},res=>process.exit(res.statusCode===200?0:1));req.on('error',()=>process.exit(1));req.on('timeout',()=>{req.destroy();process.exit(1);});"
+
+USER node
 
 FROM runtime AS api
 

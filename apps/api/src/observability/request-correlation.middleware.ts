@@ -23,6 +23,11 @@ export class RequestCorrelationMiddleware implements NestMiddleware {
         tokenPayload.permissions.join(','),
       );
       setHeaderFromToken(request, 'x-branch-id', tokenPayload.branchId);
+      setHeaderFromToken(
+        request,
+        'x-branch-ids',
+        tokenPayload.branchIds.join(','),
+      );
       setHeaderFromToken(request, 'x-driver-id', tokenPayload.driverId);
       setHeaderFromToken(
         request,

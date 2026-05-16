@@ -5,10 +5,20 @@ export function orderActorFromRequest(request: Request): OrderActorContext {
   return {
     actorId: headerValue(request, 'x-actor-id'),
     branchId: headerValue(request, 'x-branch-id'),
+    branchIds: parseBranchIds(request),
     driverId: headerValue(request, 'x-driver-id'),
     departmentIds: parsePermissions(request.headers['x-department-ids']),
     permissions: parsePermissions(request.headers['x-permissions']),
   };
+}
+
+function parseBranchIds(request: Request): Set<string> {
+  const branchIds = parsePermissions(request.headers['x-branch-ids']);
+  const branchId = headerValue(request, 'x-branch-id');
+  if (branchId) {
+    branchIds.add(branchId);
+  }
+  return branchIds;
 }
 
 function headerValue(request: Request, key: string): string | undefined {

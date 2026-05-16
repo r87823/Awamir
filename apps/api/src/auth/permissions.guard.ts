@@ -25,7 +25,9 @@ export class PermissionsGuard implements CanActivate {
 
     const request = context.switchToHttp().getRequest<Request>();
     const permissions = permissionsFromRequest(request);
-    const allowed = required.every((permission) => permissions.has(permission));
+    const allowed = required.every((permission) =>
+      hasPermission(permissions, permission),
+    );
 
     if (!allowed) {
       throw new ForbiddenException({
@@ -37,6 +39,21 @@ export class PermissionsGuard implements CanActivate {
 
     return true;
   }
+}
+
+function hasPermission(permissions: Set<string>, required: string) {
+  if (permissions.has(required)) return true;
+  return permissionAliases(required).some((alias) => permissions.has(alias));
+}
+
+function permissionAliases(required: string) {
+  if (
+    required === 'admin.master_data.view' ||
+    required === 'admin.master_data.manage'
+  ) {
+    return ['master-data:manage'];
+  }
+  return [];
 }
 
 function permissionsFromRequest(request: Request): Set<string> {

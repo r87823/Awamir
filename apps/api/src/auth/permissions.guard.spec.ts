@@ -40,6 +40,18 @@ describe('PermissionsGuard', () => {
 
     expect(guard.canActivate(contextWithBearerToken(token))).toBe(true);
   });
+
+  it('allows legacy master-data manage permission for split admin master-data permissions', () => {
+    const guard = new PermissionsGuard({
+      getAllAndOverride: jest
+        .fn()
+        .mockReturnValue(['admin.master_data.manage']),
+    } as unknown as Reflector);
+
+    expect(
+      guard.canActivate(contextWithPermissions('master-data:manage')),
+    ).toBe(true);
+  });
 });
 
 function contextWithPermissions(value: string) {

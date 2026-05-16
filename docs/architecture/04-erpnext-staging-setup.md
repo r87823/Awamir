@@ -126,6 +126,22 @@ The smoke performs:
 12. Wait for the worker to create a real ERPNext draft `Payment Entry`.
 13. Print ERPNext document names and Awamir outbox/log status.
 
+Verified R19-T02 staging result:
+
+- Sales Order: `SAL-ORD-2026-00002`
+- Sales Invoice: `ACC-SINV-2026-00001`
+- Payment Entry: `ACC-PAY-2026-00001`
+- Awamir stored ERPNext references on the order and payment.
+- `order.accountingStatus` reached `ACCOUNTING_POSTED`.
+- `payment.status` reached `POSTED`.
+
+Verified R19-T03 worker wakeup result:
+
+- The staging smoke ran without manually queuing `process-due`.
+- Sales Order and Sales Invoice sync processed automatically.
+- Payment Entry reached the worker automatically and retry/backoff scheduling worked.
+- A later Payment Entry smoke run hit ERPNext `duplicate_document`; this is a staging document/idempotency handling follow-up, not a worker wakeup failure.
+
 Verify in ERPNext UI:
 
 - Open **Selling > Sales Order** and search for the printed Sales Order name.
@@ -146,5 +162,12 @@ ERPNext sync uses `integration_outbox` plus `erpnext_sync_logs`.
 
 - Network and timeout failures create failed sync logs.
 - Operational records are not rolled back.
-- Retry scheduling follows the shared backoff policy.
+- Retry scheduling follows the shared backoff policy and creates BullMQ wakeup jobs for due or future retry scans.
 - After the configured retry sequence, rows move to `DEAD_LETTER` for manual review.
+
+## R19 Follow-Up
+
+Payment Entry duplicate handling should be improved for staging and production hardening:
+
+- If ERPNext returns `duplicate_document` for a Payment Entry that matches Awamir's idempotency identity, look up and store the existing ERPNext reference safely.
+- Alternatively, make the staging smoke payment identity unique enough that ERPNext does not reject a legitimate new smoke payment as a duplicate.

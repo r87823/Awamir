@@ -23,22 +23,24 @@ import {
 } from './master-data.types';
 
 @UseGuards(PermissionsGuard)
-@RequirePermissions('master-data:manage')
 @Controller('admin')
 export class AdminMasterDataController {
   constructor(private readonly masterData: MasterDataService) {}
 
   @Get('branches')
+  @RequirePermissions('admin.master_data.view')
   listBranches() {
     return this.masterData.listBranches();
   }
 
   @Post('branches')
+  @RequirePermissions('admin.master_data.manage')
   createBranch(@Body() body: BranchInput, @Req() request: Request) {
     return this.masterData.createBranch(body, actorFromRequest(request));
   }
 
   @Patch('branches/:id')
+  @RequirePermissions('admin.master_data.manage')
   updateBranch(
     @Param('id') id: string,
     @Body() body: Partial<BranchInput>,
@@ -48,16 +50,19 @@ export class AdminMasterDataController {
   }
 
   @Delete('branches/:id')
+  @RequirePermissions('admin.master_data.manage')
   deleteBranch(@Param('id') id: string, @Req() request: Request) {
     return this.masterData.deleteBranch(id, actorFromRequest(request));
   }
 
   @Get('production-centers')
+  @RequirePermissions('admin.master_data.view')
   listProductionCenters() {
     return this.masterData.listProductionCenters();
   }
 
   @Post('production-centers')
+  @RequirePermissions('admin.master_data.manage')
   createProductionCenter(
     @Body() body: ProductionCenterInput,
     @Req() request: Request,
@@ -69,6 +74,7 @@ export class AdminMasterDataController {
   }
 
   @Patch('production-centers/:id')
+  @RequirePermissions('admin.master_data.manage')
   updateProductionCenter(
     @Param('id') id: string,
     @Body() body: Partial<ProductionCenterInput>,
@@ -82,6 +88,7 @@ export class AdminMasterDataController {
   }
 
   @Delete('production-centers/:id')
+  @RequirePermissions('admin.master_data.manage')
   deleteProductionCenter(@Param('id') id: string, @Req() request: Request) {
     return this.masterData.deleteProductionCenter(
       id,
@@ -90,16 +97,19 @@ export class AdminMasterDataController {
   }
 
   @Get('departments')
+  @RequirePermissions('admin.master_data.view')
   listDepartments() {
     return this.masterData.listDepartments();
   }
 
   @Post('departments')
+  @RequirePermissions('admin.master_data.manage')
   createDepartment(@Body() body: DepartmentInput, @Req() request: Request) {
     return this.masterData.createDepartment(body, actorFromRequest(request));
   }
 
   @Patch('departments/:id')
+  @RequirePermissions('admin.master_data.manage')
   updateDepartment(
     @Param('id') id: string,
     @Body() body: Partial<DepartmentInput>,
@@ -113,21 +123,25 @@ export class AdminMasterDataController {
   }
 
   @Delete('departments/:id')
+  @RequirePermissions('admin.master_data.manage')
   deleteDepartment(@Param('id') id: string, @Req() request: Request) {
     return this.masterData.deleteDepartment(id, actorFromRequest(request));
   }
 
   @Get('products')
+  @RequirePermissions('admin.master_data.view')
   listProducts() {
     return this.masterData.listProducts();
   }
 
   @Post('products')
+  @RequirePermissions('admin.master_data.manage')
   createProduct(@Body() body: ProductInput, @Req() request: Request) {
     return this.masterData.createProduct(body, actorFromRequest(request));
   }
 
   @Patch('products/:id')
+  @RequirePermissions('admin.master_data.manage')
   updateProduct(
     @Param('id') id: string,
     @Body() body: Partial<ProductInput>,
@@ -137,16 +151,19 @@ export class AdminMasterDataController {
   }
 
   @Delete('products/:id')
+  @RequirePermissions('admin.master_data.manage')
   deleteProduct(@Param('id') id: string, @Req() request: Request) {
     return this.masterData.deleteProduct(id, actorFromRequest(request));
   }
 
   @Get('item-department-mappings')
+  @RequirePermissions('admin.master_data.view')
   listItemDepartmentMappings() {
     return this.masterData.listItemDepartmentMappings();
   }
 
   @Post('item-department-mappings')
+  @RequirePermissions('admin.master_data.manage')
   createItemDepartmentMapping(
     @Body() body: ItemDepartmentMappingInput,
     @Req() request: Request,
@@ -158,6 +175,7 @@ export class AdminMasterDataController {
   }
 
   @Patch('item-department-mappings/:id')
+  @RequirePermissions('admin.master_data.manage')
   updateItemDepartmentMapping(
     @Param('id') id: string,
     @Body() body: Partial<ItemDepartmentMappingInput>,
@@ -171,6 +189,7 @@ export class AdminMasterDataController {
   }
 
   @Delete('item-department-mappings/:id')
+  @RequirePermissions('admin.master_data.manage')
   deleteItemDepartmentMapping(
     @Param('id') id: string,
     @Req() request: Request,

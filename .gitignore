@@ -5,4 +5,6 @@ coverage/
 .env.*
 !.env.example
 !.env.staging.example
+!.env.production.example
 .DS_Store
+codex/

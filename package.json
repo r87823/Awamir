@@ -19,8 +19,12 @@
     "db:seed": "pnpm --filter @awamir/api db:seed",
     "docker:build": "docker build -f apps/api/Dockerfile --target api -t awamir-plus-api:local .",
     "docker:worker:build": "docker build -f apps/api/Dockerfile --target worker -t awamir-plus-worker:local .",
-    "docker:prod:up": "docker compose --env-file .env.staging -f docker-compose.prod.yml up -d",
-    "docker:prod:down": "docker compose --env-file .env.staging -f docker-compose.prod.yml down",
+    "docker:prod:config": "docker compose --env-file .env.production -f docker-compose.prod.yml config",
+    "docker:prod:up": "docker compose --env-file .env.production -f docker-compose.prod.yml up -d",
+    "docker:prod:down": "docker compose --env-file .env.production -f docker-compose.prod.yml down",
+    "docker:staging:config": "docker compose --env-file .env.staging -f docker-compose.prod.yml -f docker-compose.staging.yml config",
+    "docker:staging:up": "docker compose --env-file .env.staging -f docker-compose.prod.yml -f docker-compose.staging.yml up -d",
+    "docker:staging:down": "docker compose --env-file .env.staging -f docker-compose.prod.yml -f docker-compose.staging.yml down",
     "erpnext:verify-staging": "pnpm --filter @awamir/api erpnext:verify-staging"
   },
   "devDependencies": {

@@ -1,0 +1,40 @@
+services:
+  api:
+    env_file:
+      - path: .env.staging
+        required: false
+    labels:
+      awamir.stage: staging
+
+  worker:
+    env_file:
+      - path: .env.staging
+        required: false
+    labels:
+      awamir.stage: staging
+
+  caddy:
+    image: caddy:2-alpine
+    environment:
+      STAGING_API_DOMAIN: ${STAGING_API_DOMAIN:?set STAGING_API_DOMAIN}
+      CADDY_EMAIL: ${CADDY_EMAIL:?set CADDY_EMAIL}
+    ports:
+      - '80:80'
+      - '443:443'
+    volumes:
+      - ./ops/caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: ['CMD', 'caddy', 'version']
+      interval: 30s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+volumes:
+  caddy_data:
+  caddy_config:

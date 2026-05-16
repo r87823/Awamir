@@ -1,0 +1,12 @@
+{
+	email {$CADDY_EMAIL}
+}
+
+{$STAGING_API_DOMAIN} {
+	encode zstd gzip
+
+	@health path /health/live /health/ready
+	header @health Cache-Control "no-store"
+
+	reverse_proxy api:3000
+}

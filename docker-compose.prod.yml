@@ -1,21 +1,22 @@
 services:
   api:
-    image: awamir-plus-api:local
+    image: ${AWAMIR_API_IMAGE:-awamir-plus-api:local}
+    pull_policy: ${DOCKER_PULL_POLICY:-missing}
     build:
       context: .
       dockerfile: apps/api/Dockerfile
       target: api
     env_file:
-      - path: .env.staging
+      - path: .env.production
         required: false
     environment:
       NODE_ENV: ${NODE_ENV:-production}
       PORT: ${PORT:-3000}
       DATABASE_URL: ${DATABASE_URL:?set DATABASE_URL}
       REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
-      ERPNEXT_WORKER_ENABLED: "false"
+      ERPNEXT_WORKER_ENABLED: 'false'
     ports:
-      - "${PORT:-3000}:${PORT:-3000}"
+      - '${API_BIND_ADDRESS:-127.0.0.1}:${PORT:-3000}:${PORT:-3000}'
     depends_on:
       postgres:
         condition: service_healthy
@@ -24,9 +25,9 @@ services:
     healthcheck:
       test:
         [
-          "CMD",
-          "node",
-          "-e",
+          'CMD',
+          'node',
+          '-e',
           "const http=require('http');const port=process.env.PORT||3000;const req=http.get({host:'127.0.0.1',port,path:'/health/ready',timeout:3000},res=>process.exit(res.statusCode===200?0:1));req.on('error',()=>process.exit(1));req.on('timeout',()=>{req.destroy();process.exit(1);});",
         ]
       interval: 30s
@@ -34,27 +35,50 @@ services:
       retries: 5
       start_period: 30s
     restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: ${DOCKER_LOG_MAX_SIZE:-10m}
+        max-file: ${DOCKER_LOG_MAX_FILE:-5}
 
   worker:
-    image: awamir-plus-worker:local
+    image: ${AWAMIR_WORKER_IMAGE:-awamir-plus-worker:local}
+    pull_policy: ${DOCKER_PULL_POLICY:-missing}
     build:
       context: .
       dockerfile: apps/api/Dockerfile
       target: worker
     env_file:
-      - path: .env.staging
+      - path: .env.production
         required: false
     environment:
       NODE_ENV: ${NODE_ENV:-production}
       DATABASE_URL: ${DATABASE_URL:?set DATABASE_URL}
       REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
-      ERPNEXT_WORKER_ENABLED: "true"
+      ERPNEXT_WORKER_ENABLED: 'true'
     depends_on:
       postgres:
         condition: service_healthy
       redis:
         condition: service_healthy
+    healthcheck:
+      test:
+        [
+          'CMD',
+          'node',
+          '-e',
+          "const {redisConnectionOptions}=require('./dist/src/common/redis-connection');const Redis=require('ioredis');const r=new Redis(redisConnectionOptions());r.ping().then(()=>process.exit(process.env.ERPNEXT_WORKER_ENABLED==='true'?0:1)).catch(()=>process.exit(1)).finally(()=>r.disconnect());",
+        ]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
     restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: ${DOCKER_LOG_MAX_SIZE:-10m}
+        max-file: ${DOCKER_LOG_MAX_FILE:-5}
 
   postgres:
     image: postgres:16-alpine
@@ -67,25 +91,42 @@ services:
     healthcheck:
       test:
         [
-          "CMD-SHELL",
-          "pg_isready -U $${POSTGRES_USER:-awamir} -d $${POSTGRES_DB:-awamir_plus}",
+          'CMD-SHELL',
+          'pg_isready -U $${POSTGRES_USER:-awamir} -d $${POSTGRES_DB:-awamir_plus}',
         ]
       interval: 10s
       timeout: 5s
       retries: 10
     restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: ${DOCKER_LOG_MAX_SIZE:-10m}
+        max-file: ${DOCKER_LOG_MAX_FILE:-5}
 
   redis:
     image: redis:7-alpine
-    command: ["redis-server", "--appendonly", "yes"]
+    command:
+      [
+        'redis-server',
+        '--appendonly',
+        'yes',
+        '--appendfsync',
+        '${REDIS_APPENDFSYNC:-everysec}',
+      ]
     volumes:
       - redis_prod_data:/data
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ['CMD', 'redis-cli', 'ping']
       interval: 10s
       timeout: 5s
       retries: 10
     restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: ${DOCKER_LOG_MAX_SIZE:-10m}
+        max-file: ${DOCKER_LOG_MAX_FILE:-5}
 
 volumes:
   postgres_prod_data:

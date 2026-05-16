@@ -43,6 +43,7 @@ export type OrderFiltersDto = {
 export type OrderActorContext = {
   actorId?: string;
   branchId?: string;
+  branchIds?: Set<string>;
   driverId?: string;
   departmentIds: Set<string>;
   permissions: Set<string>;

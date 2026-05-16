@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { AdminModule } from './admin/admin.module';
 import { AccountingModule } from './accounting/accounting.module';
 import { AuthModule } from './auth/auth.module';
 import { CashboxesModule } from './cashboxes/cashboxes.module';
@@ -12,6 +13,7 @@ import { OrdersModule } from './orders/orders.module';
 import { PaymentsModule } from './payments/payments.module';
 import { ObservabilityModule } from './observability/observability.module';
 import { PrismaModule } from './prisma/prisma.module';
+import { ReportsModule } from './reports/reports.module';
 
 @Module({
   imports: [
@@ -27,6 +29,8 @@ import { PrismaModule } from './prisma/prisma.module';
     CashboxesModule,
     AccountingModule,
     NotificationsModule,
+    ReportsModule,
+    AdminModule,
   ],
   controllers: [HealthController],
 })

@@ -7,6 +7,7 @@ Verify the existing R19 ERPNext integration against a real ERPNext staging insta
 ## Scope
 
 Included:
+
 - Safe `.env.staging.example` updates for required ERPNext staging variables.
 - A backend verification script/command that uses the Awamir API for auth, order creation, accounting review/enqueue, and payment collection.
 - Prisma read-only inspection for outbox, sync logs, and stored ERPNext references.
@@ -14,6 +15,7 @@ Included:
 - Boundary scans for Flutter and Payments/Cashboxes.
 
 Excluded:
+
 - Flutter changes.
 - Real secrets in committed files.
 - New ERPNext HTTP call sites outside `ERPNextClient`.
@@ -39,6 +41,7 @@ None.
 None.
 
 The verification script uses existing endpoints:
+
 - `POST /auth/login`
 - `POST /erpnext/validate-connection`
 - `POST /orders`
@@ -55,6 +58,7 @@ The verification script uses existing endpoints:
 ## State Transitions
 
 Operational state transitions remain unchanged:
+
 - Draft order -> submitted -> approved through existing order endpoints.
 - Accounting review/enqueue through existing accounting endpoints.
 
@@ -67,6 +71,7 @@ The script authenticates with a configured staging Awamir user and relies on bac
 ## Idempotency
 
 The script creates unique test orders and stable idempotency keys per run:
+
 - `r19-t02-payment:{runId}`
 
 ERPNext sync outbox idempotency remains owned by existing service keys.
@@ -74,6 +79,7 @@ ERPNext sync outbox idempotency remains owned by existing service keys.
 ## Audit Logs
 
 Existing backend audit paths are exercised:
+
 - order creation/submission/approval
 - accounting review/enqueue
 - payment collection/review/enqueue
@@ -84,6 +90,7 @@ Existing backend audit paths are exercised:
 No new Jest tests are required for the staging smoke script. Existing mock ERPNext tests remain the automated regression layer.
 
 Verification commands:
+
 - `pnpm format`
 - `pnpm prisma:generate`
 - `pnpm lint`
@@ -92,15 +99,16 @@ Verification commands:
 - `pnpm test:e2e`
 
 Optional real staging command:
+
 - `pnpm erpnext:verify-staging`
 
 ## Acceptance Criteria
 
 - [x] Real ERPNext validate-connection succeeds when staging env is configured.
-- [ ] Real Sales Order can be created in ERPNext staging.
-- [ ] Real Draft Sales Invoice can be created in ERPNext staging.
-- [ ] Real Payment Entry can be created in ERPNext staging.
-- [ ] ERPNext document references are stored in Awamir.
+- [x] Real Sales Order can be created in ERPNext staging.
+- [x] Real Draft Sales Invoice can be created in ERPNext staging.
+- [x] Real Payment Entry can be created in ERPNext staging.
+- [x] ERPNext document references are stored in Awamir.
 - [x] Sync logs show success/failure clearly.
 - [x] Failure does not rollback Awamir operation.
 - [x] Retry/dead-letter behavior remains unchanged.
@@ -122,6 +130,12 @@ Optional real staging command:
 - Local e2e tests require PostgreSQL at `localhost:55432`; this environment did not have that database available.
 - The full verification command requires `AWAMIR_API_BASE_URL` plus database access to the matching Awamir staging database. Those values were not present in the local shell, so the command failed fast without faking success.
 - Public staging health and `POST /erpnext/validate-connection` succeeded against `https://api-staging.r8787m.cc`; ERPNext health returned HTTP 200 with `message=pong`.
+- Real staging verification later succeeded from the staging API environment after ERPNext staging master data was prepared.
+- R19-T02 created real ERPNext documents:
+  - Sales Order: `SAL-ORD-2026-00002`
+  - Sales Invoice: `ACC-SINV-2026-00001`
+  - Payment Entry: `ACC-PAY-2026-00001`
+- Awamir stored the ERPNext references on the operational records. The verified final accounting state was `order.accountingStatus=ACCOUNTING_POSTED` and `payment.status=POSTED`.
 
 ## Decision Log
 
@@ -132,12 +146,14 @@ Optional real staging command:
 ## Outcome
 
 Implementation added:
+
 - Safe staging env template additions.
 - `pnpm erpnext:verify-staging` command.
 - `apps/api/src/scripts/verify-erpnext-staging.ts` smoke verifier.
 - ERPNext staging setup documentation with full smoke and cleanup instructions.
 
 Verification completed:
+
 - `pnpm format` passed.
 - `pnpm prisma:generate` passed.
 - `pnpm lint` passed.
@@ -146,9 +162,19 @@ Verification completed:
 - Boundary scans passed: no ERPNext references in `apps/mobile`, and no ERPNext imports in `apps/api/src/payments` or `apps/api/src/cashboxes`.
 - `GET https://api-staging.r8787m.cc/health/ready` passed with DB, Redis, outbox, and ERPNext health `ok`.
 - `POST https://api-staging.r8787m.cc/erpnext/validate-connection` passed with `valid=true`.
+- Full real ERPNext staging smoke passed:
+  - Sales Order synced as `SAL-ORD-2026-00002`.
+  - Sales Invoice synced as `ACC-SINV-2026-00001`.
+  - Payment Entry synced as `ACC-PAY-2026-00001`.
+  - Awamir stored `order.erpnextSalesOrderId`, `order.erpnextSalesInvoiceId`, and `payment.erpnextPaymentEntryId`.
+  - Awamir reached `order.accountingStatus=ACCOUNTING_POSTED` and `payment.status=POSTED`.
 
 Blocked/skipped:
-- `pnpm test:e2e` could not run because the local e2e database at `localhost:55432` was unavailable.
-- `pnpm erpnext:verify-staging` failed fast with missing `AWAMIR_API_BASE_URL`; full Sales Order, Sales Invoice, and Payment Entry creation was not executed from this local shell.
 
-Final R19-T02 status: implementation and repeatable verification tooling are ready; real ERPNext connectivity is verified, but the full document sync smoke is pending execution inside a fully configured staging API/container environment.
+- `pnpm test:e2e` could not run because the local e2e database at `localhost:55432` was unavailable.
+
+Follow-up:
+
+- Improve `duplicate_document` handling for Payment Entry by looking up and storing an existing ERPNext Payment Entry reference when the duplicate is a known idempotent match, or make staging smoke payment idempotency uniquely avoid ERPNext duplicate constraints.
+
+Final R19-T02 status: completed.
