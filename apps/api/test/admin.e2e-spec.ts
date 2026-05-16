@@ -119,6 +119,22 @@ describe('Admin management foundation (e2e)', () => {
       .expect(({ body }) => expect(body.isActive).toBe(true));
   });
 
+  it('rejects weak admin-created passwords', async () => {
+    const response = await request(app.getHttpServer())
+      .post('/admin/users')
+      .set('x-permissions', 'admin.users.manage')
+      .set('x-actor-id', 'admin-e2e')
+      .send({
+        username: 'weak_password_user',
+        password: 'short',
+        displayName: 'Weak Password',
+      })
+      .expect(400);
+
+    expect(response.body.code).toBe('ADMIN_PASSWORD_POLICY_VIOLATION');
+    expect(JSON.stringify(response.body)).not.toContain('short');
+  });
+
   it('lists roles and permissions, and assigns/removes roles', async () => {
     const user = await createAdminTestUser(prisma, 'role_target');
     const roles = await request(app.getHttpServer())

@@ -5,6 +5,10 @@ import { setupOpenApi } from './openapi';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
+  const expressApp = app.getHttpAdapter().getInstance();
+  if (process.env.TRUST_PROXY) {
+    expressApp.set('trust proxy', process.env.TRUST_PROXY);
+  }
   app.useGlobalPipes(
     new ValidationPipe({
       whitelist: true,

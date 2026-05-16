@@ -4,28 +4,28 @@ import { signAuthToken } from './jwt';
 import { PermissionsGuard } from './permissions.guard';
 
 describe('PermissionsGuard', () => {
-  it('allows requests with all required permissions', () => {
-    const guard = new PermissionsGuard({
+  it('allows requests with all required permissions', async () => {
+    const guard = createGuard({
       getAllAndOverride: jest.fn().mockReturnValue(['master-data:manage']),
     } as unknown as Reflector);
 
-    expect(
+    await expect(
       guard.canActivate(contextWithPermissions('master-data:manage')),
-    ).toBe(true);
+    ).resolves.toBe(true);
   });
 
-  it('rejects requests missing required permissions', () => {
-    const guard = new PermissionsGuard({
+  it('rejects requests missing required permissions', async () => {
+    const guard = createGuard({
       getAllAndOverride: jest.fn().mockReturnValue(['master-data:manage']),
     } as unknown as Reflector);
 
-    expect(() => guard.canActivate(contextWithPermissions(''))).toThrow(
+    await expect(guard.canActivate(contextWithPermissions(''))).rejects.toThrow(
       ForbiddenException,
     );
   });
 
-  it('allows requests with permissions from a valid bearer token', () => {
-    const guard = new PermissionsGuard({
+  it('allows requests with permissions from a valid bearer token', async () => {
+    const guard = createGuard({
       getAllAndOverride: jest.fn().mockReturnValue(['notifications:view']),
     } as unknown as Reflector);
     const token = signAuthToken({
@@ -38,21 +38,31 @@ describe('PermissionsGuard', () => {
       departmentIds: [],
     });
 
-    expect(guard.canActivate(contextWithBearerToken(token))).toBe(true);
+    await expect(
+      guard.canActivate(contextWithBearerToken(token)),
+    ).resolves.toBe(true);
   });
 
-  it('allows legacy master-data manage permission for split admin master-data permissions', () => {
-    const guard = new PermissionsGuard({
+  it('allows legacy master-data manage permission for split admin master-data permissions', async () => {
+    const guard = createGuard({
       getAllAndOverride: jest
         .fn()
         .mockReturnValue(['admin.master_data.manage']),
     } as unknown as Reflector);
 
-    expect(
+    await expect(
       guard.canActivate(contextWithPermissions('master-data:manage')),
-    ).toBe(true);
+    ).resolves.toBe(true);
   });
 });
+
+function createGuard(reflector: Reflector) {
+  return new PermissionsGuard(reflector, {
+    user: {
+      findFirst: jest.fn().mockResolvedValue({ id: 'user-1' }),
+    },
+  } as never);
+}
 
 function contextWithPermissions(value: string) {
   return {

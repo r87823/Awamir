@@ -34,7 +34,11 @@ function redactValue(value: unknown): unknown {
   );
 }
 
-function shouldRedact(key: string) {
+export function shouldRedactKey(key: string) {
   const normalized = key.toLowerCase();
   return SECRET_KEY_PARTS.some((secret) => normalized.includes(secret));
+}
+
+function shouldRedact(key: string) {
+  return shouldRedactKey(key);
 }

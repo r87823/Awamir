@@ -6,6 +6,7 @@ import {
 } from '@nestjs/common';
 import { Observable, catchError, finalize, throwError } from 'rxjs';
 import { Request, Response } from 'express';
+import { shouldRedactKey } from './redaction';
 import { StructuredLogger } from './structured-logger.service';
 
 @Injectable()
@@ -32,11 +33,25 @@ export class RequestLoggingInterceptor implements NestInterceptor {
           status: errorStatus ?? response.statusCode,
           details: {
             method: request.method,
-            path: request.originalUrl ?? request.url,
+            path: sanitizePath(request.originalUrl ?? request.url),
           },
         });
       }),
     );
+  }
+}
+
+function sanitizePath(path: string) {
+  try {
+    const url = new URL(path, 'http://awamir.local');
+    for (const key of [...url.searchParams.keys()]) {
+      if (shouldRedactKey(key)) {
+        url.searchParams.set(key, '[REDACTED]');
+      }
+    }
+    return `${url.pathname}${url.search}`;
+  } catch {
+    return path;
   }
 }
 

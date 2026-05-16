@@ -6,14 +6,18 @@ import {
 } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import { Request } from 'express';
-import { bearerToken, verifyAuthToken } from './jwt';
+import { PrismaService } from '../prisma/prisma.service';
+import { AuthTokenPayload, bearerToken, verifyAuthToken } from './jwt';
 import { REQUIRED_PERMISSIONS_KEY } from './permissions.decorator';
 
 @Injectable()
 export class PermissionsGuard implements CanActivate {
-  constructor(private readonly reflector: Reflector) {}
+  constructor(
+    private readonly reflector: Reflector,
+    private readonly prisma: PrismaService,
+  ) {}
 
-  canActivate(context: ExecutionContext): boolean {
+  async canActivate(context: ExecutionContext): Promise<boolean> {
     const required = this.reflector.getAllAndOverride<string[]>(
       REQUIRED_PERMISSIONS_KEY,
       [context.getHandler(), context.getClass()],
@@ -24,7 +28,11 @@ export class PermissionsGuard implements CanActivate {
     }
 
     const request = context.switchToHttp().getRequest<Request>();
-    const permissions = permissionsFromRequest(request);
+    const authContext = authContextFromRequest(request);
+    if (authContext.tokenPayload) {
+      await this.ensureTokenUserIsActive(authContext.tokenPayload);
+    }
+    const permissions = authContext.permissions;
     const allowed = required.every((permission) =>
       hasPermission(permissions, permission),
     );
@@ -38,6 +46,19 @@ export class PermissionsGuard implements CanActivate {
     }
 
     return true;
+  }
+
+  private async ensureTokenUserIsActive(payload: AuthTokenPayload) {
+    const user = await this.prisma.user.findFirst({
+      where: { id: payload.sub, isActive: true, deletedAt: null },
+      select: { id: true },
+    });
+    if (!user) {
+      throw new ForbiddenException({
+        code: 'TOKEN_USER_INACTIVE',
+        message: 'Token subject is inactive or unavailable',
+      });
+    }
   }
 }
 
@@ -56,19 +77,22 @@ function permissionAliases(required: string) {
   return [];
 }
 
-function permissionsFromRequest(request: Request): Set<string> {
+function authContextFromRequest(request: Request): {
+  tokenPayload?: AuthTokenPayload;
+  permissions: Set<string>;
+} {
   const tokenPayload = verifyAuthToken(
     bearerToken(request.headers.authorization),
   );
   if (tokenPayload) {
-    return new Set(tokenPayload.permissions);
+    return { tokenPayload, permissions: new Set(tokenPayload.permissions) };
   }
 
   if (!legacyPermissionHeadersAllowed()) {
-    return new Set();
+    return { permissions: new Set() };
   }
 
-  return parsePermissions(request.headers['x-permissions']);
+  return { permissions: parsePermissions(request.headers['x-permissions']) };
 }
 
 function legacyPermissionHeadersAllowed() {

@@ -6,8 +6,8 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { AppSettingValueType, Prisma } from '@prisma/client';
-import bcrypt from 'bcryptjs';
 import { AuditService } from '../audit/audit.service';
+import { hashPassword } from '../auth/password-policy';
 import { normalizePagination } from '../common/pagination';
 import { ERPNextSyncService } from '../erpnext/erpnext-sync.service';
 import { redactERPNextPayload } from '../erpnext/erpnext-redaction';
@@ -473,16 +473,6 @@ function safeUser(user: AdminUserRecord) {
       nameEn: entry.department.nameEn,
     })),
   };
-}
-
-async function hashPassword(password: string) {
-  if (!password || password.length < 6) {
-    throw new BadRequestException({
-      code: 'ADMIN_PASSWORD_TOO_SHORT',
-      message: 'Password must be at least 6 characters',
-    });
-  }
-  return bcrypt.hash(password, 12);
 }
 
 function normalizeUsername(username: string) {

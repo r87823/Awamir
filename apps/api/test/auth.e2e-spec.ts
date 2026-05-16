@@ -24,6 +24,11 @@ describe('DB-backed auth (e2e)', () => {
     await app.close();
   });
 
+  afterEach(() => {
+    delete process.env.AUTH_LOGIN_RATE_LIMIT_MAX;
+    delete process.env.AUTH_LOGIN_RATE_LIMIT_WINDOW_SECONDS;
+  });
+
   it('logs in with a seeded database user and returns a JWT session', async () => {
     const riyadh = await prisma.branch.findUniqueOrThrow({
       where: { code: 'RIYADH' },
@@ -66,6 +71,36 @@ describe('DB-backed auth (e2e)', () => {
         timestamp: expect.any(String),
       }),
     );
+  });
+
+  it('rate limits repeated invalid login attempts without exposing secrets', async () => {
+    process.env.AUTH_LOGIN_RATE_LIMIT_MAX = '2';
+    process.env.AUTH_LOGIN_RATE_LIMIT_WINDOW_SECONDS = '60';
+
+    await request(app.getHttpServer())
+      .post('/auth/login')
+      .set('x-forwarded-for', '198.51.100.24')
+      .send({ username: 'admin', password: 'wrong1' })
+      .expect(400);
+    await request(app.getHttpServer())
+      .post('/auth/login')
+      .set('x-forwarded-for', '198.51.100.24')
+      .send({ username: 'admin', password: 'wrong2' })
+      .expect(400);
+
+    const response = await request(app.getHttpServer())
+      .post('/auth/login')
+      .set('x-forwarded-for', '198.51.100.24')
+      .send({ username: 'admin', password: 'wrong3' })
+      .expect(429);
+
+    expect(response.body).toEqual(
+      expect.objectContaining({
+        code: 'AUTH_RATE_LIMITED',
+        correlationId: expect.any(String),
+      }),
+    );
+    expect(JSON.stringify(response.body)).not.toContain('wrong3');
   });
 
   it('rejects inactive users', async () => {
@@ -111,6 +146,32 @@ describe('DB-backed auth (e2e)', () => {
       .get('/notifications/unread-count')
       .set('Authorization', `Bearer ${login.body.token}`)
       .expect(200);
+  });
+
+  it('rejects an old token after the user is disabled', async () => {
+    const login = await request(app.getHttpServer())
+      .post('/auth/login')
+      .send({ username: 'operator', password: 'demo' })
+      .expect(201);
+
+    try {
+      await prisma.user.update({
+        where: { username: 'operator' },
+        data: { isActive: false },
+      });
+
+      const response = await request(app.getHttpServer())
+        .get('/notifications/unread-count')
+        .set('Authorization', `Bearer ${login.body.token}`)
+        .expect(403);
+
+      expect(response.body.code).toBe('TOKEN_USER_INACTIVE');
+    } finally {
+      await prisma.user.update({
+        where: { username: 'operator' },
+        data: { isActive: true },
+      });
+    }
   });
 
   it('uses JWT actor scope instead of spoofed actor headers', async () => {

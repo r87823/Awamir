@@ -1,22 +1,46 @@
 import {
   BadRequestException,
   ForbiddenException,
+  HttpException,
+  HttpStatus,
   Injectable,
 } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import bcrypt from 'bcryptjs';
+import { AuditService } from '../audit/audit.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { AuthRateLimiter } from './auth-rate-limiter.service';
 import { LoginDto, LoginResponse, SessionUser } from './auth.types';
 import { signAuthToken } from './jwt';
 
 @Injectable()
 export class AuthService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly rateLimiter: AuthRateLimiter,
+    private readonly audit: AuditService,
+  ) {}
 
-  async login(input: LoginDto): Promise<LoginResponse> {
+  async login(
+    input: LoginDto,
+    options: { ip?: string } = {},
+  ): Promise<LoginResponse> {
     const username = input.username?.trim().toLowerCase();
     if (!username || !input.password) {
+      this.rateLimiter.recordFailure({ ip: options.ip, username });
+      await this.auditLoginFailure(username, options.ip, 'missing_credentials');
       throw invalidLogin();
+    }
+    try {
+      this.rateLimiter.assertCanAttempt({ ip: options.ip, username });
+    } catch (error) {
+      if (
+        error instanceof HttpException &&
+        error.getStatus() === HttpStatus.TOO_MANY_REQUESTS
+      ) {
+        await this.auditLoginFailure(username, options.ip, 'rate_limited');
+      }
+      throw error;
     }
 
     const user = await this.prisma.user.findUnique({
@@ -49,6 +73,8 @@ export class AuthService {
     });
 
     if (!user?.passwordHash || user.deletedAt) {
+      this.rateLimiter.recordFailure({ ip: options.ip, username });
+      await this.auditLoginFailure(username, options.ip, 'invalid_credentials');
       throw invalidLogin();
     }
 
@@ -57,16 +83,21 @@ export class AuthService {
       user.passwordHash,
     );
     if (!passwordMatches) {
+      this.rateLimiter.recordFailure({ ip: options.ip, username });
+      await this.auditLoginFailure(username, options.ip, 'invalid_credentials');
       throw invalidLogin();
     }
 
     if (!user.isActive) {
+      this.rateLimiter.recordFailure({ ip: options.ip, username });
+      await this.auditLoginFailure(username, options.ip, 'inactive_user');
       throw new ForbiddenException({
         code: 'USER_INACTIVE',
         message: 'User is inactive',
       });
     }
 
+    this.rateLimiter.recordSuccess({ ip: options.ip, username });
     const sessionUser = toSessionUser(user);
     return {
       token: signAuthToken({
@@ -76,6 +107,22 @@ export class AuthService {
       }),
       user: sessionUser,
     };
+  }
+
+  private async auditLoginFailure(
+    username: string | undefined,
+    ip: string | undefined,
+    reason: string,
+  ) {
+    await this.audit.record({
+      action: 'auth.login_failed',
+      entityType: 'auth',
+      payload: {
+        username: username ?? null,
+        ip: ip ?? null,
+        reason,
+      },
+    });
   }
 }
 

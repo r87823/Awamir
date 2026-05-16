@@ -56,4 +56,45 @@ describe('Observability (e2e)', () => {
       response.headers['x-correlation-id'],
     );
   });
+
+  it('sets baseline security headers', async () => {
+    const response = await request(app.getHttpServer())
+      .get('/health/live')
+      .expect(200);
+
+    expect(response.headers['x-content-type-options']).toBe('nosniff');
+    expect(response.headers['x-frame-options']).toBe('DENY');
+    expect(response.headers['referrer-policy']).toBe('no-referrer');
+    expect(response.headers['permissions-policy']).toContain('camera=()');
+  });
+
+  it('allows configured CORS origins without wildcard credentials', async () => {
+    const originalOrigins = process.env.CORS_ORIGINS;
+    const originalCredentials = process.env.CORS_CREDENTIALS;
+    process.env.CORS_ORIGINS = 'https://app.example.test';
+    process.env.CORS_CREDENTIALS = 'true';
+
+    try {
+      const response = await request(app.getHttpServer())
+        .options('/auth/login')
+        .set('origin', 'https://app.example.test')
+        .expect(204);
+
+      expect(response.headers['access-control-allow-origin']).toBe(
+        'https://app.example.test',
+      );
+      expect(response.headers['access-control-allow-credentials']).toBe('true');
+    } finally {
+      restoreOptionalEnv('CORS_ORIGINS', originalOrigins);
+      restoreOptionalEnv('CORS_CREDENTIALS', originalCredentials);
+    }
+  });
 });
+
+function restoreOptionalEnv(key: string, value: string | undefined) {
+  if (value === undefined) {
+    delete process.env[key];
+  } else {
+    process.env[key] = value;
+  }
+}

@@ -14,9 +14,11 @@ import { PaymentsModule } from './payments/payments.module';
 import { ObservabilityModule } from './observability/observability.module';
 import { PrismaModule } from './prisma/prisma.module';
 import { ReportsModule } from './reports/reports.module';
+import { SecurityModule } from './security/security.module';
 
 @Module({
   imports: [
+    SecurityModule,
     ObservabilityModule,
     AuthModule,
     PrismaModule,

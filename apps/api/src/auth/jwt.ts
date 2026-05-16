@@ -10,16 +10,25 @@ export type AuthTokenPayload = {
   branchIds: string[];
   departmentIds: string[];
   driverId?: string;
+  iss?: string;
+  aud?: string;
+  iat: number;
   exp: number;
 };
 
-export function signAuthToken(payload: Omit<AuthTokenPayload, 'exp'>): string {
+export function signAuthToken(
+  payload: Omit<AuthTokenPayload, 'exp' | 'iat' | 'iss' | 'aud'>,
+): string {
   const expiresInSeconds = Number(
     process.env.AUTH_JWT_EXPIRES_IN_SECONDS ?? 8 * 60 * 60,
   );
+  const issuedAt = Math.floor(Date.now() / 1000);
   const fullPayload: AuthTokenPayload = {
     ...payload,
-    exp: Math.floor(Date.now() / 1000) + expiresInSeconds,
+    iss: jwtIssuer(),
+    aud: jwtAudience(),
+    iat: issuedAt,
+    exp: issuedAt + validExpiresInSeconds(expiresInSeconds),
   };
   const header = { alg: 'HS256', typ: 'JWT' };
   const encodedHeader = base64UrlEncode(JSON.stringify(header));
@@ -48,6 +57,10 @@ export function verifyAuthToken(
     ) as AuthTokenPayload;
     if (!payload.exp || payload.exp < Math.floor(Date.now() / 1000))
       return null;
+    if (!payload.iat || payload.iat > Math.floor(Date.now() / 1000) + 60)
+      return null;
+    if (jwtIssuer() && payload.iss !== jwtIssuer()) return null;
+    if (jwtAudience() && payload.aud !== jwtAudience()) return null;
     if (!Array.isArray(payload.permissions)) return null;
     if (!Array.isArray(payload.branchIds)) return null;
     if (!Array.isArray(payload.departmentIds)) return null;
@@ -68,11 +81,36 @@ function sign(value: string) {
 }
 
 function jwtSecret() {
-  if (process.env.AUTH_JWT_SECRET) return process.env.AUTH_JWT_SECRET;
-  if (process.env.NODE_ENV === 'production') {
-    throw new Error('AUTH_JWT_SECRET is required in production');
+  const secret = process.env.AUTH_JWT_SECRET;
+  if (secret) {
+    if (strictRuntime() && secret.length < 32) {
+      throw new Error('AUTH_JWT_SECRET must be at least 32 characters');
+    }
+    return secret;
+  }
+  if (strictRuntime()) {
+    throw new Error('AUTH_JWT_SECRET is required in staging/production');
   }
   return 'dev-awamir-auth-secret-change-me';
+}
+
+function strictRuntime() {
+  return (
+    process.env.NODE_ENV === 'production' || process.env.NODE_ENV === 'staging'
+  );
+}
+
+function jwtIssuer() {
+  return process.env.AUTH_JWT_ISSUER || undefined;
+}
+
+function jwtAudience() {
+  return process.env.AUTH_JWT_AUDIENCE || undefined;
+}
+
+function validExpiresInSeconds(value: number) {
+  if (!Number.isInteger(value) || value <= 0) return 8 * 60 * 60;
+  return value;
 }
 
 function base64UrlEncode(value: string) {
