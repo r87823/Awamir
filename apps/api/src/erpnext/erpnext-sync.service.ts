@@ -36,6 +36,7 @@ import {
   ERPNextResponse,
   PlaceholderSyncContract,
 } from './erpnext.types';
+import { ERPNextQueueScheduler } from './erpnext-queue-scheduler';
 
 @Injectable()
 export class ERPNextSyncService {
@@ -47,6 +48,7 @@ export class ERPNextSyncService {
     private readonly events?: DomainEventBus,
     private readonly logger?: StructuredLogger,
     @Optional() private readonly requestContext?: RequestContextService,
+    @Optional() private readonly queueScheduler?: ERPNextQueueScheduler,
   ) {}
 
   async validateERPNextConnection() {
@@ -99,10 +101,11 @@ export class ERPNextSyncService {
     });
 
     if (existing) {
+      await this.scheduleOutboxWakeup(existing, 'existing');
       return existing;
     }
 
-    return this.prisma.integrationOutbox.create({
+    const created = await this.prisma.integrationOutbox.create({
       data: {
         operation: contract.operation,
         idempotencyKey: contract.idempotencyKey,
@@ -113,6 +116,8 @@ export class ERPNextSyncService {
         correlationId: this.currentCorrelationId(),
       },
     });
+    await this.scheduleOutboxWakeup(created, 'created');
+    return created;
   }
 
   async retrySync(outboxId: string) {
@@ -131,7 +136,7 @@ export class ERPNextSyncService {
     const retryCount = outbox.retryCount + 1;
     const retryState = nextRetryState(retryCount);
 
-    return this.prisma.integrationOutbox.update({
+    const updated = await this.prisma.integrationOutbox.update({
       where: { id: outboxId },
       data: {
         status: retryState.status,
@@ -141,6 +146,8 @@ export class ERPNextSyncService {
         lockedAt: null,
       },
     });
+    await this.scheduleOutboxWakeup(updated, 'retried');
+    return updated;
   }
 
   async processOutbox(outboxId: string, now = new Date()) {
@@ -365,12 +372,14 @@ export class ERPNextSyncService {
       where: { id: outbox.id },
       data: {
         status: retryState.status,
+        retryCount: { increment: 1 },
         lastError: error,
         lockedAt: null,
         nextRetryAt: retryState.nextRetryAt,
       },
     });
     await this.applyFailedAccountingStatus(outbox, error);
+    await this.scheduleOutboxWakeup(updated, 'failed');
     await this.events?.emit(
       domainEvent({
         name: 'ERPNextSyncFailedEvent',
@@ -386,6 +395,13 @@ export class ERPNextSyncService {
       }),
     );
     return updated;
+  }
+
+  private async scheduleOutboxWakeup(
+    outbox: IntegrationOutbox,
+    reason: 'created' | 'existing' | 'retried' | 'failed',
+  ) {
+    await this.queueScheduler?.scheduleOutboxWakeup(outbox, reason);
   }
 
   private async applySuccessfulERPNextReference(outbox: IntegrationOutbox) {

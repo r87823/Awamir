@@ -31,20 +31,36 @@ describe('ERPNextSyncService', () => {
         create: jest.fn(),
       },
     };
-    const service = new ERPNextSyncService(prisma as never, {} as never);
+    const scheduler = { scheduleOutboxWakeup: jest.fn() };
+    const service = new ERPNextSyncService(
+      prisma as never,
+      {} as never,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      scheduler as never,
+    );
 
     await expect(service.createSalesOrder('order-1')).resolves.toBe(existing);
     expect(prisma.integrationOutbox.create).not.toHaveBeenCalled();
+    expect(scheduler.scheduleOutboxWakeup).toHaveBeenCalledWith(
+      existing,
+      'existing',
+    );
   });
 
   it('uses request correlation id when creating outbox rows', async () => {
+    const created = { id: 'outbox-1' };
     const prisma = {
       integrationOutbox: {
         findUnique: jest.fn().mockResolvedValue(null),
-        create: jest.fn().mockResolvedValue({ id: 'outbox-1' }),
+        create: jest.fn().mockResolvedValue(created),
       },
     };
     const requestContext = { correlationId: () => 'corr-outbox' };
+    const scheduler = { scheduleOutboxWakeup: jest.fn() };
     const service = new ERPNextSyncService(
       prisma as never,
       {} as never,
@@ -53,6 +69,7 @@ describe('ERPNextSyncService', () => {
       undefined,
       undefined,
       requestContext as never,
+      scheduler as never,
     );
 
     await service.createSalesOrder('order-1');
@@ -61,6 +78,47 @@ describe('ERPNextSyncService', () => {
       expect.objectContaining({
         data: expect.objectContaining({ correlationId: 'corr-outbox' }),
       }),
+    );
+    expect(scheduler.scheduleOutboxWakeup).toHaveBeenCalledWith(
+      created,
+      'created',
+    );
+  });
+
+  it('schedules a wakeup when retrying a failed outbox row', async () => {
+    const outbox = {
+      id: 'outbox-retry',
+      status: ERPNextSyncStatus.FAILED,
+      retryCount: 0,
+    };
+    const updated = {
+      ...outbox,
+      status: ERPNextSyncStatus.PENDING,
+      retryCount: 1,
+      nextRetryAt: new Date(Date.now() + 60_000),
+    };
+    const prisma = {
+      integrationOutbox: {
+        findUnique: jest.fn().mockResolvedValue(outbox),
+        update: jest.fn().mockResolvedValue(updated),
+      },
+    };
+    const scheduler = { scheduleOutboxWakeup: jest.fn() };
+    const service = new ERPNextSyncService(
+      prisma as never,
+      {} as never,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      scheduler as never,
+    );
+
+    await expect(service.retrySync(outbox.id)).resolves.toBe(updated);
+    expect(scheduler.scheduleOutboxWakeup).toHaveBeenCalledWith(
+      updated,
+      'retried',
     );
   });
 

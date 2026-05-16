@@ -10,6 +10,7 @@ import { join } from 'node:path';
 import request from 'supertest';
 import { startERPNextMock, ERPNextMockServer } from '../../erpnext-mock/src';
 import { AppModule } from '../src/app.module';
+import { ERPNextQueueScheduler } from '../src/erpnext/erpnext-queue-scheduler';
 import { ERPNextSyncService } from '../src/erpnext/erpnext-sync.service';
 import { PrismaService } from '../src/prisma/prisma.service';
 
@@ -17,6 +18,7 @@ describe('Accounting (e2e)', () => {
   let app: INestApplication;
   let prisma: PrismaService;
   let syncService: ERPNextSyncService;
+  let queueScheduler: ERPNextQueueScheduler;
   let mock: ERPNextMockServer;
   let branchId: string;
 
@@ -41,6 +43,7 @@ describe('Accounting (e2e)', () => {
     await app.init();
     prisma = app.get(PrismaService);
     syncService = app.get(ERPNextSyncService);
+    queueScheduler = app.get(ERPNextQueueScheduler);
   });
 
   beforeEach(async () => {
@@ -56,6 +59,7 @@ describe('Accounting (e2e)', () => {
   });
 
   afterEach(async () => {
+    jest.restoreAllMocks();
     restoreOptionalEnv('ACCOUNTING_REQUIRE_REVIEW_BEFORE_SYNC', undefined);
     restoreOptionalEnv(
       'ACCOUNTING_ALLOW_CLOSE_WITH_PENDING_CASHBOXES',
@@ -102,6 +106,9 @@ describe('Accounting (e2e)', () => {
 
   it('sync sales order creates one outbox row on repeated calls', async () => {
     const order = await reviewedSalesOrder('SO-SYNC');
+    const wakeup = jest
+      .spyOn(queueScheduler, 'scheduleOutboxWakeup')
+      .mockResolvedValue(undefined);
 
     const first = await request(app.getHttpServer())
       .post(`/accounting/orders/${order.id}/sync-sales-order`)
@@ -123,6 +130,21 @@ describe('Accounting (e2e)', () => {
         },
       }),
     ).resolves.toBe(1);
+    expect(wakeup).toHaveBeenCalledWith(
+      expect.objectContaining({
+        operation: ERPNextSyncOperation.CREATE_SALES_ORDER,
+        sourceId: order.id,
+      }),
+      'created',
+    );
+    expect(wakeup).toHaveBeenCalledWith(
+      expect.objectContaining({
+        operation: ERPNextSyncOperation.CREATE_SALES_ORDER,
+        sourceId: order.id,
+      }),
+      'existing',
+    );
+    wakeup.mockRestore();
   });
 
   it('review invoice permission is enforced', async () => {
@@ -144,6 +166,9 @@ describe('Accounting (e2e)', () => {
 
   it('sync invoice creates one outbox row on repeated calls', async () => {
     const order = await reviewedInvoice('INV-SYNC');
+    const wakeup = jest
+      .spyOn(queueScheduler, 'scheduleOutboxWakeup')
+      .mockResolvedValue(undefined);
 
     const first = await request(app.getHttpServer())
       .post(`/accounting/orders/${order.id}/sync-invoice`)
@@ -165,6 +190,14 @@ describe('Accounting (e2e)', () => {
         },
       }),
     ).resolves.toBe(1);
+    expect(wakeup).toHaveBeenCalledWith(
+      expect.objectContaining({
+        operation: ERPNextSyncOperation.CREATE_DRAFT_SALES_INVOICE,
+        sourceId: order.id,
+      }),
+      'created',
+    );
+    wakeup.mockRestore();
   });
 
   it('review payment permission is enforced', async () => {
@@ -190,6 +223,9 @@ describe('Accounting (e2e)', () => {
 
   it('sync payment creates one outbox row on repeated calls', async () => {
     const payment = await reviewedPayment('PAY-SYNC');
+    const wakeup = jest
+      .spyOn(queueScheduler, 'scheduleOutboxWakeup')
+      .mockResolvedValue(undefined);
 
     const first = await request(app.getHttpServer())
       .post(`/accounting/payments/${payment.id}/sync`)
@@ -211,10 +247,21 @@ describe('Accounting (e2e)', () => {
         },
       }),
     ).resolves.toBe(1);
+    expect(wakeup).toHaveBeenCalledWith(
+      expect.objectContaining({
+        operation: ERPNextSyncOperation.CREATE_DRAFT_PAYMENT_ENTRY,
+        sourceId: payment.id,
+      }),
+      'created',
+    );
+    wakeup.mockRestore();
   });
 
   it('retry failed sync increments retry count and applies backoff', async () => {
     const outbox = await createFailedOutbox(prisma, 0);
+    const wakeup = jest
+      .spyOn(queueScheduler, 'scheduleOutboxWakeup')
+      .mockResolvedValue(undefined);
 
     const response = await request(app.getHttpServer())
       .post(`/accounting/erpnext-sync/${outbox.id}/retry`)
@@ -227,10 +274,22 @@ describe('Accounting (e2e)', () => {
     expect(new Date(response.body.nextRetryAt).getTime()).toBeGreaterThan(
       Date.now(),
     );
+    expect(wakeup).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: outbox.id,
+        status: ERPNextSyncStatus.PENDING,
+        retryCount: 1,
+      }),
+      'retried',
+    );
+    wakeup.mockRestore();
   });
 
   it('retry dead letters the fifth retry', async () => {
     const outbox = await createFailedOutbox(prisma, 4);
+    const wakeup = jest
+      .spyOn(queueScheduler, 'scheduleOutboxWakeup')
+      .mockResolvedValue(undefined);
 
     const response = await request(app.getHttpServer())
       .post(`/accounting/erpnext-sync/${outbox.id}/retry`)
@@ -240,6 +299,15 @@ describe('Accounting (e2e)', () => {
 
     expect(response.body.retryCount).toBe(5);
     expect(response.body.status).toBe('DEAD_LETTER');
+    expect(wakeup).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: outbox.id,
+        status: ERPNextSyncStatus.DEAD_LETTER,
+        retryCount: 5,
+      }),
+      'retried',
+    );
+    wakeup.mockRestore();
   });
 
   it('close financial day rejects pending cashboxes', async () => {

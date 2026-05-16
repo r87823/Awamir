@@ -4,6 +4,7 @@ import { DomainEventsModule } from '../domain-events/domain-events.module';
 import { ERPNextClient } from './erpnext.client';
 import { ERPNextConfigService } from './erpnext.config';
 import { ERPNextController } from './erpnext.controller';
+import { ERPNextQueueScheduler } from './erpnext-queue-scheduler';
 import { ERPNextSyncService } from './erpnext-sync.service';
 import { ERPNextSyncWorker } from './erpnext-sync.worker';
 
@@ -13,6 +14,7 @@ import { ERPNextSyncWorker } from './erpnext-sync.worker';
   providers: [
     ERPNextClient,
     ERPNextConfigService,
+    ERPNextQueueScheduler,
     ERPNextSyncService,
     ERPNextSyncWorker,
   ],

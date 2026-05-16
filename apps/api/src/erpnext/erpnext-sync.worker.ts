@@ -1,9 +1,11 @@
 import { Injectable, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { Job, Queue, Worker } from 'bullmq';
 import { redisConnectionOptions } from '../common/redis-connection';
+import {
+  ERPNEXT_PROCESS_DUE_JOB,
+  ERPNEXT_SYNC_QUEUE_NAME,
+} from './erpnext-queue-scheduler';
 import { ERPNextSyncService } from './erpnext-sync.service';
-
-const queueName = 'erpnext-sync';
 
 @Injectable()
 export class ERPNextSyncWorker implements OnModuleInit, OnModuleDestroy {
@@ -18,10 +20,14 @@ export class ERPNextSyncWorker implements OnModuleInit, OnModuleDestroy {
     }
 
     const connection = redisConnectionOptions();
-    this.queue = new Queue(queueName, { connection });
-    this.worker = new Worker(queueName, (job) => this.handleJob(job), {
-      connection,
-    });
+    this.queue = new Queue(ERPNEXT_SYNC_QUEUE_NAME, { connection });
+    this.worker = new Worker(
+      ERPNEXT_SYNC_QUEUE_NAME,
+      (job) => this.handleJob(job),
+      {
+        connection,
+      },
+    );
   }
 
   async onModuleDestroy() {
@@ -30,7 +36,7 @@ export class ERPNextSyncWorker implements OnModuleInit, OnModuleDestroy {
   }
 
   enqueueDueScan() {
-    return this.queue?.add('process-due', {});
+    return this.queue?.add(ERPNEXT_PROCESS_DUE_JOB, {});
   }
 
   handleJob(job: Job) {
