@@ -132,7 +132,7 @@ docker compose --env-file .env.production -f docker-compose.prod.yml up -d postg
 Run migrations:
 
 ```bash
-docker compose --env-file .env.production -f docker-compose.prod.yml run --rm api pnpm prisma:migrate:deploy
+docker compose --env-file .env.production -f docker-compose.prod.yml run --rm api ./node_modules/.bin/prisma migrate deploy --schema prisma/schema.prisma
 ```
 
 Start API and worker:
@@ -165,7 +165,7 @@ cd /opt/awamir-plus
 docker compose --env-file .env.production -f docker-compose.prod.yml config
 docker compose --env-file .env.production -f docker-compose.prod.yml pull api worker
 
-docker compose --env-file .env.production -f docker-compose.prod.yml run --rm api pnpm prisma:migrate:deploy
+docker compose --env-file .env.production -f docker-compose.prod.yml run --rm api ./node_modules/.bin/prisma migrate deploy --schema prisma/schema.prisma
 
 docker compose --env-file .env.production -f docker-compose.prod.yml up -d --no-deps api worker
 docker compose --env-file .env.production -f docker-compose.prod.yml ps api worker
@@ -298,7 +298,7 @@ docker compose --env-file .env.production -f docker-compose.prod.yml logs --tail
 For ERPNext staging or controlled production smoke, use the existing verifier only with approved smoke credentials and no secrets printed:
 
 ```bash
-docker compose --env-file .env.production -f docker-compose.prod.yml exec api pnpm erpnext:verify-staging
+docker compose --env-file .env.production -f docker-compose.prod.yml exec api node dist/src/scripts/verify-erpnext-staging.js
 ```
 
 Use that command carefully in production because it creates real operational and ERPNext documents.

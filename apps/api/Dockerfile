@@ -51,7 +51,7 @@ FROM runtime AS api
 
 ENV ERPNEXT_WORKER_ENABLED=false
 
-CMD ["pnpm", "start:prod"]
+CMD ["node", "dist/src/main.js"]
 
 FROM runtime AS worker
 
@@ -59,4 +59,4 @@ ENV ERPNEXT_WORKER_ENABLED=true
 
 HEALTHCHECK NONE
 
-CMD ["pnpm", "start:worker"]
+CMD ["node", "dist/src/worker.js"]

@@ -104,10 +104,10 @@ Run the full smoke:
 pnpm erpnext:verify-staging
 ```
 
-Inside the deployed API container, the same command can be run with the container's server-only env:
+Inside the deployed API container, run the compiled verifier directly with the container's server-only env. Production images do not rely on `pnpm` at runtime:
 
 ```bash
-docker compose --env-file .env.staging -f docker-compose.prod.yml -f docker-compose.staging.yml exec api pnpm --filter @awamir/api erpnext:verify-staging
+docker compose --env-file .env.staging -f docker-compose.prod.yml -f docker-compose.staging.yml exec api node dist/src/scripts/verify-erpnext-staging.js
 ```
 
 The smoke performs:

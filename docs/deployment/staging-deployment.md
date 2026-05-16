@@ -176,7 +176,7 @@ Run migrations explicitly:
 docker compose --env-file .env.staging \
   -f docker-compose.prod.yml \
   -f docker-compose.staging.yml \
-  run --rm api pnpm prisma:migrate:deploy
+  run --rm api ./node_modules/.bin/prisma migrate deploy --schema prisma/schema.prisma
 ```
 
 Start API, worker, and staging reverse proxy:
@@ -217,7 +217,7 @@ docker compose --env-file .env.staging \
 docker compose --env-file .env.staging \
   -f docker-compose.prod.yml \
   -f docker-compose.staging.yml \
-  run --rm api pnpm prisma:migrate:deploy
+  run --rm api ./node_modules/.bin/prisma migrate deploy --schema prisma/schema.prisma
 
 docker compose --env-file .env.staging \
   -f docker-compose.prod.yml \
@@ -320,7 +320,7 @@ docker compose --env-file .env.staging \
   -e AWAMIR_VERIFY_PRODUCT_CODE=FATAYER_SPINACH \
   -e AWAMIR_VERIFY_PAYMENT_METHOD=CASH \
   -e AWAMIR_VERIFY_ALLOW_STAGING_STATE_PREP=true \
-  api pnpm erpnext:verify-staging
+  api node dist/src/scripts/verify-erpnext-staging.js
 
 unset AWAMIR_VERIFY_PASSWORD
 ```
