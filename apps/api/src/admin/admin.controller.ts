@@ -48,6 +48,18 @@ export class AdminController {
     return this.admin.getUser(id);
   }
 
+  @Get('users/:id/sessions')
+  @RequirePermissions('admin.users.view')
+  listUserSessions(@Param('id') id: string) {
+    return this.admin.listUserSessions(id);
+  }
+
+  @Post('users/:id/sessions/revoke')
+  @RequirePermissions('admin.users.manage')
+  revokeUserSessions(@Param('id') id: string, @Req() request: Request) {
+    return this.admin.revokeUserSessions(id, adminActorFromRequest(request));
+  }
+
   @Patch('users/:id')
   @RequirePermissions('admin.users.manage')
   updateUser(

@@ -433,9 +433,34 @@ model User {
   roles            UserRole[]
   branchAccess     UserBranchAccess[]
   departmentAccess UserDepartmentAccess[]
+  authSessions     AuthSession[]
 
   @@index([isActive])
   @@map("users")
+}
+
+model AuthSession {
+  id                   String        @id @default(uuid()) @db.Uuid
+  userId               String        @map("user_id") @db.Uuid
+  refreshTokenHash     String        @map("refresh_token_hash") @db.VarChar(128)
+  userAgent            String?       @map("user_agent") @db.Text
+  ipHash               String?       @map("ip_hash") @db.VarChar(128)
+  expiresAt            DateTime      @map("expires_at")
+  revokedAt            DateTime?     @map("revoked_at")
+  revokedReason        String?       @map("revoked_reason") @db.VarChar(160)
+  replacedBySessionId  String?       @map("replaced_by_session_id") @db.Uuid
+  lastUsedAt           DateTime?     @map("last_used_at")
+  createdAt            DateTime      @default(now()) @map("created_at")
+  updatedAt            DateTime      @updatedAt @map("updated_at")
+  user                 User          @relation(fields: [userId], references: [id])
+  replacedBySession    AuthSession?  @relation("AuthSessionReplacement", fields: [replacedBySessionId], references: [id])
+  replacingSessions    AuthSession[] @relation("AuthSessionReplacement")
+
+  @@unique([refreshTokenHash])
+  @@index([userId])
+  @@index([expiresAt])
+  @@index([revokedAt])
+  @@map("auth_sessions")
 }
 
 model Role {

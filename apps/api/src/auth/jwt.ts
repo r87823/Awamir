@@ -2,6 +2,7 @@ import { createHmac, timingSafeEqual } from 'node:crypto';
 
 export type AuthTokenPayload = {
   sub: string;
+  sid?: string;
   username: string;
   actorId: string;
   displayName: string;
@@ -19,9 +20,7 @@ export type AuthTokenPayload = {
 export function signAuthToken(
   payload: Omit<AuthTokenPayload, 'exp' | 'iat' | 'iss' | 'aud'>,
 ): string {
-  const expiresInSeconds = Number(
-    process.env.AUTH_JWT_EXPIRES_IN_SECONDS ?? 8 * 60 * 60,
-  );
+  const expiresInSeconds = accessTokenExpiresInSeconds();
   const issuedAt = Math.floor(Date.now() / 1000);
   const fullPayload: AuthTokenPayload = {
     ...payload,
@@ -35,6 +34,12 @@ export function signAuthToken(
   const encodedPayload = base64UrlEncode(JSON.stringify(fullPayload));
   const signature = sign(`${encodedHeader}.${encodedPayload}`);
   return `${encodedHeader}.${encodedPayload}.${signature}`;
+}
+
+export function accessTokenExpiresInSeconds() {
+  return validExpiresInSeconds(
+    Number(process.env.AUTH_JWT_EXPIRES_IN_SECONDS ?? 8 * 60 * 60),
+  );
 }
 
 export function verifyAuthToken(

@@ -7,6 +7,7 @@ import {
 } from '@nestjs/common';
 import { AppSettingValueType, Prisma } from '@prisma/client';
 import { AuditService } from '../audit/audit.service';
+import { AuthService } from '../auth/auth.service';
 import { hashPassword } from '../auth/password-policy';
 import { normalizePagination } from '../common/pagination';
 import { ERPNextSyncService } from '../erpnext/erpnext-sync.service';
@@ -34,6 +35,7 @@ export class AdminService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
+    private readonly auth: AuthService,
     private readonly erpnextSync: ERPNextSyncService,
   ) {}
 
@@ -126,8 +128,9 @@ export class AdminService {
       data.driverId = normalizedOptionalString(input.driverId);
     }
     if (input.isActive !== undefined) data.isActive = input.isActive;
-    if (input.password !== undefined)
-      data.passwordHash = await hashPassword(input.password);
+    const passwordChanged = input.password !== undefined;
+    if (passwordChanged)
+      data.passwordHash = await hashPassword(input.password!);
 
     const updated = await this.prisma.$transaction(async (tx) => {
       await tx.user.update({ where: { id }, data });
@@ -143,6 +146,14 @@ export class AdminService {
       entityId: id,
       payload: auditUserPayload(input),
     });
+    if (passwordChanged) {
+      await this.auth.revokeSessionsForUser(
+        id,
+        'password_change',
+        'auth.sessions_revoked_due_to_password_change',
+        actor.actorId,
+      );
+    }
     return safeUser(updated);
   }
 
@@ -178,7 +189,29 @@ export class AdminService {
       entityType: 'user',
       entityId: id,
     });
+    await this.auth.revokeSessionsForUser(
+      id,
+      'user_deactivation',
+      'auth.sessions_revoked_due_to_user_deactivation',
+      actor.actorId,
+    );
     return safeUser(user);
+  }
+
+  async listUserSessions(id: string) {
+    await this.ensureUser(id);
+    return this.auth.listSessionsForUserForAdmin(id);
+  }
+
+  async revokeUserSessions(id: string, actor: AdminActor) {
+    await this.ensureUser(id);
+    await this.auth.revokeSessionsForUser(
+      id,
+      'admin_revoked',
+      'auth.session_revoked',
+      actor.actorId,
+    );
+    return this.auth.listSessionsForUserForAdmin(id);
   }
 
   async listRoles() {

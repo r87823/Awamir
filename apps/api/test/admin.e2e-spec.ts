@@ -119,6 +119,92 @@ describe('Admin management foundation (e2e)', () => {
       .expect(({ body }) => expect(body.isActive).toBe(true));
   });
 
+  it('lists and revokes user sessions without exposing token hashes', async () => {
+    const created = await request(app.getHttpServer())
+      .post('/admin/users')
+      .set('x-permissions', 'admin.users.manage')
+      .set('x-actor-id', 'admin-e2e')
+      .send({
+        username: 'admin_e2e_session_user',
+        password: 'secret123',
+        displayName: 'Session User',
+      })
+      .expect(201);
+
+    const login = await request(app.getHttpServer())
+      .post('/auth/login')
+      .send({ username: 'admin_e2e_session_user', password: 'secret123' })
+      .expect(201);
+
+    const sessions = await request(app.getHttpServer())
+      .get(`/admin/users/${created.body.id}/sessions`)
+      .set('x-permissions', 'admin.users.view')
+      .expect(200);
+    expect(sessions.body.sessions).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: expect.any(String), isActive: true }),
+      ]),
+    );
+    expect(JSON.stringify(sessions.body)).not.toContain('refreshTokenHash');
+    expect(JSON.stringify(sessions.body)).not.toContain(
+      login.body.refreshToken,
+    );
+
+    await request(app.getHttpServer())
+      .post(`/admin/users/${created.body.id}/sessions/revoke`)
+      .set('x-permissions', 'admin.users.manage')
+      .set('x-actor-id', 'admin-e2e')
+      .expect(201)
+      .expect(({ body }) =>
+        expect(body.sessions[0]).toEqual(
+          expect.objectContaining({ revokedReason: 'admin_revoked' }),
+        ),
+      );
+  });
+
+  it('revokes active sessions on admin password update and deactivation', async () => {
+    const created = await request(app.getHttpServer())
+      .post('/admin/users')
+      .set('x-permissions', 'admin.users.manage')
+      .set('x-actor-id', 'admin-e2e')
+      .send({
+        username: 'admin_e2e_revoked_user',
+        password: 'secret123',
+        displayName: 'Revoked User',
+      })
+      .expect(201);
+
+    const firstLogin = await request(app.getHttpServer())
+      .post('/auth/login')
+      .send({ username: 'admin_e2e_revoked_user', password: 'secret123' })
+      .expect(201);
+
+    await request(app.getHttpServer())
+      .patch(`/admin/users/${created.body.id}`)
+      .set('x-permissions', 'admin.users.manage')
+      .set('x-actor-id', 'admin-e2e')
+      .send({ password: 'new-secret123' })
+      .expect(200);
+    await request(app.getHttpServer())
+      .post('/auth/refresh')
+      .send({ refreshToken: firstLogin.body.refreshToken })
+      .expect(401);
+
+    const secondLogin = await request(app.getHttpServer())
+      .post('/auth/login')
+      .send({ username: 'admin_e2e_revoked_user', password: 'new-secret123' })
+      .expect(201);
+    await request(app.getHttpServer())
+      .post(`/admin/users/${created.body.id}/deactivate`)
+      .set('x-permissions', 'admin.users.manage')
+      .set('x-actor-id', 'admin-e2e')
+      .expect(201);
+    await request(app.getHttpServer())
+      .post('/auth/refresh')
+      .send({ refreshToken: secondLogin.body.refreshToken })
+      .expect(401);
+  });
+
   it('rejects weak admin-created passwords', async () => {
     const response = await request(app.getHttpServer())
       .post('/admin/users')
@@ -338,6 +424,7 @@ async function deleteAdminTestData(prisma: PrismaService) {
   });
   const userIds = users.map((user) => user.id);
   if (userIds.length) {
+    await prisma.authSession.deleteMany({ where: { userId: { in: userIds } } });
     await prisma.userRole.deleteMany({ where: { userId: { in: userIds } } });
     await prisma.userBranchAccess.deleteMany({
       where: { userId: { in: userIds } },

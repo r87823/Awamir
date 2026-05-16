@@ -24,9 +24,14 @@ describe('DB-backed auth (e2e)', () => {
     await app.close();
   });
 
+  beforeEach(async () => {
+    await prisma.authSession.deleteMany();
+  });
+
   afterEach(() => {
     delete process.env.AUTH_LOGIN_RATE_LIMIT_MAX;
     delete process.env.AUTH_LOGIN_RATE_LIMIT_WINDOW_SECONDS;
+    delete process.env.AUTH_REFRESH_TOKEN_TTL_DAYS;
   });
 
   it('logs in with a seeded database user and returns a JWT session', async () => {
@@ -43,6 +48,10 @@ describe('DB-backed auth (e2e)', () => {
     expect(response.body).toEqual(
       expect.objectContaining({
         token: expect.stringMatching(/^[^.]+\.[^.]+\.[^.]+$/),
+        accessToken: expect.stringMatching(/^[^.]+\.[^.]+\.[^.]+$/),
+        refreshToken: expect.stringMatching(/^awamir_rt_/),
+        expiresIn: expect.any(Number),
+        refreshExpiresIn: expect.any(Number),
         user: expect.objectContaining({
           actorId: expect.any(String),
           branchId: riyadh.id,
@@ -55,7 +64,166 @@ describe('DB-backed auth (e2e)', () => {
         }),
       }),
     );
+    expect(response.body.accessToken).toBe(response.body.token);
     expect(JSON.stringify(response.body)).not.toContain('passwordHash');
+  });
+
+  it('rotates refresh tokens and stores only refresh token hashes', async () => {
+    const login = await request(app.getHttpServer())
+      .post('/auth/login')
+      .send({ username: 'operator', password: 'demo' })
+      .expect(201);
+
+    const stored = await prisma.authSession.findMany({
+      where: { userId: login.body.user.actorId },
+    });
+    expect(stored).toHaveLength(1);
+    expect(stored[0].refreshTokenHash).not.toBe(login.body.refreshToken);
+    expect(JSON.stringify(stored)).not.toContain(login.body.refreshToken);
+
+    const refreshed = await request(app.getHttpServer())
+      .post('/auth/refresh')
+      .send({ refreshToken: login.body.refreshToken })
+      .expect(201);
+
+    expect(refreshed.body).toEqual(
+      expect.objectContaining({
+        token: expect.any(String),
+        accessToken: expect.any(String),
+        refreshToken: expect.stringMatching(/^awamir_rt_/),
+        user: expect.objectContaining({ actorId: login.body.user.actorId }),
+      }),
+    );
+    expect(refreshed.body.refreshToken).not.toBe(login.body.refreshToken);
+
+    const oldSession = await prisma.authSession.findUniqueOrThrow({
+      where: { id: stored[0].id },
+    });
+    expect(oldSession.revokedReason).toBe('rotated');
+    expect(oldSession.replacedBySessionId).toEqual(expect.any(String));
+  });
+
+  it('rejects reused refresh tokens and revokes active user sessions', async () => {
+    const login = await request(app.getHttpServer())
+      .post('/auth/login')
+      .send({ username: 'cashier', password: 'demo' })
+      .expect(201);
+    const refreshed = await request(app.getHttpServer())
+      .post('/auth/refresh')
+      .send({ refreshToken: login.body.refreshToken })
+      .expect(201);
+
+    const response = await request(app.getHttpServer())
+      .post('/auth/refresh')
+      .send({ refreshToken: login.body.refreshToken })
+      .expect(401);
+
+    expect(response.body.code).toBe('REFRESH_TOKEN_REUSED');
+    const activeSessions = await prisma.authSession.count({
+      where: { userId: login.body.user.actorId, revokedAt: null },
+    });
+    expect(activeSessions).toBe(0);
+
+    await request(app.getHttpServer())
+      .post('/auth/refresh')
+      .send({ refreshToken: refreshed.body.refreshToken })
+      .expect(401);
+  });
+
+  it('logs out a single session idempotently', async () => {
+    const login = await request(app.getHttpServer())
+      .post('/auth/login')
+      .send({ username: 'driver', password: 'demo' })
+      .expect(201);
+
+    await request(app.getHttpServer())
+      .post('/auth/logout')
+      .send({ refreshToken: login.body.refreshToken })
+      .expect(201)
+      .expect(({ body }) => expect(body.ok).toBe(true));
+    await request(app.getHttpServer())
+      .post('/auth/logout')
+      .send({ refreshToken: login.body.refreshToken })
+      .expect(201)
+      .expect(({ body }) => expect(body.ok).toBe(true));
+
+    await request(app.getHttpServer())
+      .post('/auth/refresh')
+      .send({ refreshToken: login.body.refreshToken })
+      .expect(401);
+  });
+
+  it('logs out all sessions for the access token user', async () => {
+    const first = await request(app.getHttpServer())
+      .post('/auth/login')
+      .send({ username: 'supervisor', password: 'demo' })
+      .expect(201);
+    await request(app.getHttpServer())
+      .post('/auth/login')
+      .send({ username: 'supervisor', password: 'demo' })
+      .expect(201);
+
+    await request(app.getHttpServer())
+      .post('/auth/logout-all')
+      .set('Authorization', `Bearer ${first.body.accessToken}`)
+      .expect(201)
+      .expect(({ body }) => expect(body.ok).toBe(true));
+
+    const activeSessions = await prisma.authSession.count({
+      where: { userId: first.body.user.actorId, revokedAt: null },
+    });
+    expect(activeSessions).toBe(0);
+  });
+
+  it('lists own session metadata without token hashes', async () => {
+    const login = await request(app.getHttpServer())
+      .post('/auth/login')
+      .send({ username: 'accountant', password: 'demo' })
+      .expect(201);
+
+    const response = await request(app.getHttpServer())
+      .get('/auth/sessions')
+      .set('Authorization', `Bearer ${login.body.accessToken}`)
+      .expect(200);
+
+    expect(response.body.sessions).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: expect.any(String),
+          isActive: true,
+        }),
+      ]),
+    );
+    expect(JSON.stringify(response.body)).not.toContain('refreshTokenHash');
+    expect(JSON.stringify(response.body)).not.toContain(
+      login.body.refreshToken,
+    );
+  });
+
+  it('rejects refresh after the user is disabled', async () => {
+    const login = await request(app.getHttpServer())
+      .post('/auth/login')
+      .send({ username: 'fulfillment', password: 'demo' })
+      .expect(201);
+
+    try {
+      await prisma.user.update({
+        where: { username: 'fulfillment' },
+        data: { isActive: false },
+      });
+
+      const response = await request(app.getHttpServer())
+        .post('/auth/refresh')
+        .send({ refreshToken: login.body.refreshToken })
+        .expect(403);
+
+      expect(response.body.code).toBe('USER_INACTIVE');
+    } finally {
+      await prisma.user.update({
+        where: { username: 'fulfillment' },
+        data: { isActive: true },
+      });
+    }
   });
 
   it('rejects an invalid password', async () => {

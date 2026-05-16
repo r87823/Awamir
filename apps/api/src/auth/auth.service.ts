@@ -4,14 +4,28 @@ import {
   HttpException,
   HttpStatus,
   Injectable,
+  UnauthorizedException,
 } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import bcrypt from 'bcryptjs';
 import { AuditService } from '../audit/audit.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuthRateLimiter } from './auth-rate-limiter.service';
-import { LoginDto, LoginResponse, SessionUser } from './auth.types';
-import { signAuthToken } from './jwt';
+import { AuthSessionsService } from './auth-sessions.service';
+import {
+  LoginDto,
+  LoginResponse,
+  LogoutDto,
+  RefreshTokenDto,
+  SessionUser,
+} from './auth.types';
+import {
+  AuthTokenPayload,
+  accessTokenExpiresInSeconds,
+  bearerToken,
+  signAuthToken,
+  verifyAuthToken,
+} from './jwt';
 
 @Injectable()
 export class AuthService {
@@ -19,11 +33,12 @@ export class AuthService {
     private readonly prisma: PrismaService,
     private readonly rateLimiter: AuthRateLimiter,
     private readonly audit: AuditService,
+    private readonly sessions: AuthSessionsService,
   ) {}
 
   async login(
     input: LoginDto,
-    options: { ip?: string } = {},
+    options: { ip?: string; userAgent?: string } = {},
   ): Promise<LoginResponse> {
     const username = input.username?.trim().toLowerCase();
     if (!username || !input.password) {
@@ -45,31 +60,7 @@ export class AuthService {
 
     const user = await this.prisma.user.findUnique({
       where: { username },
-      include: {
-        roles: {
-          include: {
-            role: {
-              include: {
-                permissions: {
-                  include: {
-                    permission: true,
-                  },
-                },
-              },
-            },
-          },
-        },
-        branchAccess: {
-          include: {
-            branch: true,
-          },
-        },
-        departmentAccess: {
-          include: {
-            department: true,
-          },
-        },
-      },
+      include: authUserInclude,
     });
 
     if (!user?.passwordHash || user.deletedAt) {
@@ -99,14 +90,141 @@ export class AuthService {
 
     this.rateLimiter.recordSuccess({ ip: options.ip, username });
     const sessionUser = toSessionUser(user);
-    return {
-      token: signAuthToken({
-        sub: user.id,
-        username: user.username,
-        ...sessionUser,
-      }),
-      user: sessionUser,
-    };
+    const refreshSession = await this.sessions.createSession({
+      userId: user.id,
+      ip: options.ip,
+      userAgent: options.userAgent,
+    });
+    await this.audit.record({
+      action: 'auth.login_success',
+      actorId: user.id,
+      entityType: 'auth_session',
+      entityId: refreshSession.session.id,
+      payload: { username: user.username, ip: options.ip ?? null },
+    });
+    return buildLoginResponse(user, sessionUser, refreshSession);
+  }
+
+  async refresh(
+    input: RefreshTokenDto,
+    options: { ip?: string; userAgent?: string } = {},
+  ): Promise<LoginResponse> {
+    const session = await this.sessions.findByRefreshToken(input.refreshToken);
+    if (!session) throw invalidRefreshToken();
+    if (session.revokedAt) {
+      await this.sessions.revokeActiveSessionsForUser({
+        userId: session.userId,
+        reason: 'refresh_reuse_detected',
+      });
+      await this.audit.record({
+        action: 'auth.refresh_reuse_detected',
+        actorId: session.userId,
+        entityType: 'auth_session',
+        entityId: session.id,
+        payload: { revokedReason: session.revokedReason ?? null },
+      });
+      throw new UnauthorizedException({
+        code: 'REFRESH_TOKEN_REUSED',
+        message: 'Refresh token has already been used',
+      });
+    }
+    if (session.expiresAt <= new Date()) {
+      await this.sessions.revokeSession(session.id, 'expired', {
+        lastUsed: true,
+      });
+      throw new UnauthorizedException({
+        code: 'REFRESH_TOKEN_EXPIRED',
+        message: 'Refresh token has expired',
+      });
+    }
+
+    const user = await this.loadActiveAuthUser(session.userId);
+    if (!user) {
+      await this.sessions.revokeSession(session.id, 'user_inactive', {
+        lastUsed: true,
+      });
+      throw new ForbiddenException({
+        code: 'USER_INACTIVE',
+        message: 'User is inactive',
+      });
+    }
+
+    const rotated = await this.sessions.rotateSession(session, {
+      ip: options.ip,
+      userAgent: options.userAgent,
+    });
+    await this.audit.record({
+      action: 'auth.refresh_success',
+      actorId: user.id,
+      entityType: 'auth_session',
+      entityId: rotated.session.id,
+      payload: { replacedSessionId: session.id },
+    });
+    return buildLoginResponse(user, toSessionUser(user), rotated);
+  }
+
+  async logout(
+    input: LogoutDto,
+    options: { authorization?: string; ip?: string } = {},
+  ) {
+    const payload = verifyAuthToken(bearerToken(options.authorization));
+    const refreshSession = input.refreshToken
+      ? await this.sessions.findByRefreshToken(input.refreshToken)
+      : null;
+    const sessionId = refreshSession?.id ?? payload?.sid;
+    await this.sessions.revokeSession(sessionId, 'logout', { lastUsed: true });
+    await this.audit.record({
+      action: 'auth.logout',
+      actorId: refreshSession?.userId ?? payload?.sub,
+      entityType: 'auth_session',
+      entityId: sessionId,
+      payload: { ip: options.ip ?? null },
+    });
+    return { ok: true };
+  }
+
+  async logoutAll(authorization: string | undefined) {
+    const payload = await this.requireActiveAccessToken(authorization);
+    await this.sessions.revokeActiveSessionsForUser({
+      userId: payload.sub,
+      reason: 'logout_all',
+    });
+    await this.audit.record({
+      action: 'auth.logout_all',
+      actorId: payload.sub,
+      entityType: 'user',
+      entityId: payload.sub,
+    });
+    return { ok: true };
+  }
+
+  async listOwnSessions(authorization: string | undefined) {
+    const payload = await this.requireActiveAccessToken(authorization);
+    return { sessions: await this.sessions.listSessionsForUser(payload.sub) };
+  }
+
+  async listSessionsForUserForAdmin(userId: string) {
+    return { sessions: await this.sessions.listSessionsForUser(userId) };
+  }
+
+  async revokeSessionsForUser(
+    userId: string,
+    reason: string,
+    auditAction = 'auth.session_revoked',
+    actorId?: string,
+  ) {
+    const result = await this.sessions.revokeActiveSessionsForUser({
+      userId,
+      reason,
+    });
+    await this.audit.record({
+      action: auditAction,
+      actorId,
+      entityType: 'user',
+      entityId: userId,
+      payload: { reason, count: result.count },
+    });
+    return result;
   }
 
   private async auditLoginFailure(
@@ -124,6 +242,36 @@ export class AuthService {
       },
     });
   }
+
+  private async requireActiveAccessToken(
+    authorization: string | undefined,
+  ): Promise<AuthTokenPayload> {
+    const payload = verifyAuthToken(bearerToken(authorization));
+    if (!payload) {
+      throw new UnauthorizedException({
+        code: 'AUTHENTICATION_REQUIRED',
+        message: 'Authentication is required',
+      });
+    }
+    const user = await this.prisma.user.findFirst({
+      where: { id: payload.sub, isActive: true, deletedAt: null },
+      select: { id: true },
+    });
+    if (!user) {
+      throw new ForbiddenException({
+        code: 'TOKEN_USER_INACTIVE',
+        message: 'Token subject is inactive or unavailable',
+      });
+    }
+    return payload;
+  }
+
+  private async loadActiveAuthUser(id: string) {
+    return this.prisma.user.findFirst({
+      where: { id, isActive: true, deletedAt: null },
+      include: authUserInclude,
+    });
+  }
 }
 
 function invalidLogin() {
@@ -131,6 +279,34 @@ function invalidLogin() {
     code: 'INVALID_LOGIN',
     message: 'Invalid username or password',
   });
+}
+
+function invalidRefreshToken() {
+  return new UnauthorizedException({
+    code: 'INVALID_REFRESH_TOKEN',
+    message: 'Invalid refresh token',
+  });
+}
+
+function buildLoginResponse(
+  user: AuthUserRecord,
+  sessionUser: SessionUser,
+  refreshSession: Awaited<ReturnType<AuthSessionsService['createSession']>>,
+): LoginResponse {
+  const accessToken = signAuthToken({
+    sub: user.id,
+    sid: refreshSession.session.id,
+    username: user.username,
+    ...sessionUser,
+  });
+  return {
+    token: accessToken,
+    accessToken,
+    refreshToken: refreshSession.refreshToken,
+    expiresIn: accessTokenExpiresInSeconds(),
+    refreshExpiresIn: refreshSession.expiresIn,
+    user: sessionUser,
+  };
 }
 
 function toSessionUser(user: AuthUserRecord): SessionUser {
@@ -164,29 +340,31 @@ function toSessionUser(user: AuthUserRecord): SessionUser {
 }
 
 type AuthUserRecord = Prisma.UserGetPayload<{
-  include: {
-    roles: {
-      include: {
-        role: {
-          include: {
-            permissions: {
-              include: {
-                permission: true;
-              };
-            };
-          };
-        };
-      };
-    };
-    branchAccess: {
-      include: {
-        branch: true;
-      };
-    };
-    departmentAccess: {
-      include: {
-        department: true;
-      };
-    };
-  };
+  include: typeof authUserInclude;
 }>;
+
+const authUserInclude = {
+  roles: {
+    include: {
+      role: {
+        include: {
+          permissions: {
+            include: {
+              permission: true,
+            },
+          },
+        },
+      },
+    },
+  },
+  branchAccess: {
+    include: {
+      branch: true,
+    },
+  },
+  departmentAccess: {
+    include: {
+      department: true,
+    },
+  },
+} satisfies Prisma.UserInclude;
