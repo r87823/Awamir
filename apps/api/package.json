@@ -5,7 +5,7 @@
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
     "db:seed": "prisma db seed",
-    "format": "prettier --write \"src/**/*.ts\" \"test/**/*.ts\" \"scripts/**/*.ts\"",
+    "format": "prettier --write \"src/**/*.ts\" \"test/**/*.ts\"",
     "lint": "eslint .",
     "prisma:generate": "prisma generate --schema prisma/schema.prisma",
     "prisma:migrate:dev": "prisma migrate dev --schema prisma/schema.prisma",
@@ -17,8 +17,8 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "jest --config jest.config.ts",
     "test:e2e": "jest --config test/jest-e2e.config.ts --runInBand",
-    "erpnext:verify-staging": "node dist/scripts/verify-erpnext-staging.js",
-    "erpnext:verify-staging:dev": "ts-node scripts/verify-erpnext-staging.ts"
+    "erpnext:verify-staging": "node dist/src/scripts/verify-erpnext-staging.js",
+    "erpnext:verify-staging:dev": "ts-node src/scripts/verify-erpnext-staging.ts"
   },
   "prisma": {
     "seed": "ts-node prisma/seed.ts"

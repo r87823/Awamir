@@ -12,7 +12,6 @@
     "src/**/*.ts",
     "test/**/*.ts",
     "prisma/**/*.ts",
-    "scripts/**/*.ts",
     "jest.config.ts"
   ]
 }

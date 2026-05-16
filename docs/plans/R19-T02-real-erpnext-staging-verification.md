@@ -26,7 +26,7 @@ Excluded:
 - `package.json`
 - `apps/api/package.json`
 - `apps/api/tsconfig.json`
-- `apps/api/scripts/verify-erpnext-staging.ts`
+- `apps/api/src/scripts/verify-erpnext-staging.ts`
 - `docs/architecture/04-erpnext-staging-setup.md`
 - `docs/plans/R19-T02-real-erpnext-staging-verification.md`
 
@@ -134,7 +134,7 @@ Optional real staging command:
 Implementation added:
 - Safe staging env template additions.
 - `pnpm erpnext:verify-staging` command.
-- `apps/api/scripts/verify-erpnext-staging.ts` smoke verifier.
+- `apps/api/src/scripts/verify-erpnext-staging.ts` smoke verifier.
 - ERPNext staging setup documentation with full smoke and cleanup instructions.
 
 Verification completed:
