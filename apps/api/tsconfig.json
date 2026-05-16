@@ -8,5 +8,11 @@
     "incremental": true,
     "outDir": "dist"
   },
-  "include": ["src/**/*.ts", "test/**/*.ts", "prisma/**/*.ts", "jest.config.ts"]
+  "include": [
+    "src/**/*.ts",
+    "test/**/*.ts",
+    "prisma/**/*.ts",
+    "scripts/**/*.ts",
+    "jest.config.ts"
+  ]
 }

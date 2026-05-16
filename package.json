@@ -20,7 +20,8 @@
     "docker:build": "docker build -f apps/api/Dockerfile --target api -t awamir-plus-api:local .",
     "docker:worker:build": "docker build -f apps/api/Dockerfile --target worker -t awamir-plus-worker:local .",
     "docker:prod:up": "docker compose --env-file .env.staging -f docker-compose.prod.yml up -d",
-    "docker:prod:down": "docker compose --env-file .env.staging -f docker-compose.prod.yml down"
+    "docker:prod:down": "docker compose --env-file .env.staging -f docker-compose.prod.yml down",
+    "erpnext:verify-staging": "pnpm --filter @awamir/api erpnext:verify-staging"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.1",
