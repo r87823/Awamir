@@ -68,6 +68,58 @@ describe('Master data foundation (e2e)', () => {
     await expect(prisma.auditLog.count()).resolves.toBe(1);
   });
 
+  it('lets order creators list active mapped products for Flutter order entry', async () => {
+    const product = await prisma.product.create({
+      data: {
+        code: 'E2E_PRODUCT',
+        nameAr: 'منتج اختبار',
+        nameEn: 'E2E Product',
+        erpnextItemCode: 'ERP-E2E-PRODUCT',
+      },
+    });
+    const unmapped = await prisma.product.create({
+      data: {
+        code: 'UNMAPPED_PRODUCT',
+        nameAr: 'منتج بلا ربط',
+        nameEn: 'Unmapped Product',
+        erpnextItemCode: 'ERP-UNMAPPED-PRODUCT',
+      },
+    });
+    const department = await prisma.department.create({
+      data: {
+        code: 'E2E_DEPARTMENT',
+        nameAr: 'قسم اختبار',
+        nameEn: 'E2E Department',
+      },
+    });
+    await prisma.itemDepartmentMapping.create({
+      data: { productId: product.id, departmentId: department.id },
+    });
+
+    const forbidden = await request(app.getHttpServer())
+      .get('/products/active')
+      .expect(403);
+    expect(forbidden.body.code).toBe('FORBIDDEN');
+
+    const response = await request(app.getHttpServer())
+      .get('/products/active')
+      .set('x-permissions', 'orders:create')
+      .expect(200);
+
+    expect(response.body.data).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: product.id,
+          code: product.code,
+          erpnextItemCode: product.erpnextItemCode,
+        }),
+      ]),
+    );
+    expect(response.body.data).not.toEqual(
+      expect.arrayContaining([expect.objectContaining({ id: unmapped.id })]),
+    );
+  });
+
   it('returns MISSING_DEPARTMENT_MAPPING when a split item has no mapping', async () => {
     const product = await prisma.product.create({
       data: {

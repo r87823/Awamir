@@ -163,6 +163,32 @@ export class MasterDataService {
     });
   }
 
+  listActiveOrderProducts() {
+    return this.prisma.product.findMany({
+      where: {
+        deletedAt: null,
+        isActive: true,
+        mappings: {
+          some: {
+            deletedAt: null,
+            isActive: true,
+          },
+        },
+      },
+      orderBy: { code: 'asc' },
+      select: {
+        id: true,
+        code: true,
+        nameAr: true,
+        nameEn: true,
+        erpnextItemCode: true,
+        stockUom: true,
+        itemGroup: true,
+        isActive: true,
+      },
+    });
+  }
+
   async createProduct(input: ProductInput, actor: ActorContext) {
     const created = await this.prisma.product.create({ data: input });
     await this.auditMutation('product', 'created', created.id, actor, input);

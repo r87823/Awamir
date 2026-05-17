@@ -12,6 +12,7 @@ import 'package:awamir_plus_mobile/src/core/providers.dart';
 import 'package:awamir_plus_mobile/src/core/routing/app_router.dart';
 import 'package:awamir_plus_mobile/src/features/admin/admin_user_form_screen.dart';
 import 'package:awamir_plus_mobile/src/features/dashboard/dashboard_screen.dart';
+import 'package:awamir_plus_mobile/src/features/orders/create_order_screen.dart';
 import 'package:awamir_plus_mobile/src/features/notifications/notifications_screen.dart';
 import 'package:awamir_plus_mobile/src/features/orders/orders_list_screen.dart';
 import 'package:flutter/material.dart';
@@ -163,6 +164,26 @@ void main() {
 
     expect(find.text('ORD-1'), findsOneWidget);
     expect(find.textContaining('عميل'), findsOneWidget);
+  });
+
+  testWidgets('create order screen loads active products', (tester) async {
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          backendRepositoryProvider.overrideWithValue(FakeOrdersRepository()),
+        ],
+        child: const MaterialApp(
+          home: Directionality(
+            textDirection: TextDirection.rtl,
+            child: CreateOrderScreen(),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('FATAYER_SPINACH'), findsOneWidget);
+    expect(find.widgetWithText(TextField, 'معرف المنتج'), findsNothing);
   });
 
   testWidgets('dashboard shows unread notifications badge', (tester) async {
@@ -416,6 +437,18 @@ class FakeOrdersRepository extends BackendRepository {
       'pageSize': 20,
       'total': 1,
     });
+  }
+
+  @override
+  Future<List<Map<String, Object?>>> activeProducts() async {
+    return [
+      {
+        'id': 'product-1',
+        'code': 'FATAYER_SPINACH',
+        'nameAr': 'فطائر سبانخ',
+        'erpnextItemCode': 'ERP-FATAYER-SPINACH',
+      },
+    ];
   }
 }
 

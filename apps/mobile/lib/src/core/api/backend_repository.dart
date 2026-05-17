@@ -20,6 +20,11 @@ class BackendRepository {
     return _api.post('/orders', data: body);
   }
 
+  Future<List<Map<String, Object?>>> activeProducts() async {
+    final response = await _api.get('/products/active');
+    return listFromResponse(response);
+  }
+
   Future<Map<String, Object?>> submitOrder(String id) {
     return _api.post('/orders/$id/submit-for-approval');
   }
