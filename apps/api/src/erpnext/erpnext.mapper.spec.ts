@@ -87,6 +87,54 @@ describe('ERPNext mapper', () => {
       ),
     ).toThrow(ERPNextSyncValidationError);
   });
+
+  it('does not link draft Payment Entry to an unsubmitted Sales Invoice', () => {
+    const request = buildDraftPaymentEntryRequest(
+      {
+        id: 'payment-1',
+        orderId: 'order-1',
+        amount: 10,
+        method: PaymentMethod.CASH,
+        collectedAt: new Date('2026-05-10T00:00:00.000Z'),
+        order: {
+          id: 'order-1',
+          customerId: 'CUST-1',
+          erpnextSalesInvoiceId: 'ACC-SINV-DRAFT',
+          accountingStatus: 'DRAFT_INVOICE_CREATED',
+        },
+      } as never,
+      baseConfig(),
+    );
+
+    expect(request.body.references).toEqual([]);
+  });
+
+  it('links draft Payment Entry to submitted Sales Invoice only', () => {
+    const request = buildDraftPaymentEntryRequest(
+      {
+        id: 'payment-1',
+        orderId: 'order-1',
+        amount: 10,
+        method: PaymentMethod.CASH,
+        collectedAt: new Date('2026-05-10T00:00:00.000Z'),
+        order: {
+          id: 'order-1',
+          customerId: 'CUST-1',
+          erpnextSalesInvoiceId: 'ACC-SINV-SUBMITTED',
+          accountingStatus: 'INVOICE_SUBMITTED',
+        },
+      } as never,
+      baseConfig(),
+    );
+
+    expect(request.body.references).toEqual([
+      expect.objectContaining({
+        reference_doctype: 'Sales Invoice',
+        reference_name: 'ACC-SINV-SUBMITTED',
+        allocated_amount: 10,
+      }),
+    ]);
+  });
 });
 
 function baseConfig(): ERPNextConfig {

@@ -43,14 +43,16 @@ export class ERPNextClient {
         details: { method: input.method, path: input.path },
       });
 
+      const body = await readResponseBody(response);
+
       return {
         status: response.status,
         ok: response.ok,
-        body: await readResponseBody(response),
+        body,
         durationMs,
         errorCode: response.ok
           ? undefined
-          : errorCodeForStatus(response.status),
+          : errorCodeForFailure(response.status, body),
       };
     } catch (error: unknown) {
       const durationMs = Date.now() - startedAt;
@@ -95,8 +97,22 @@ function isAbortError(error: unknown) {
   return error instanceof Error && error.name === 'AbortError';
 }
 
-function errorCodeForStatus(status: number) {
+function errorCodeForFailure(status: number, body: unknown) {
   if (status === 408 || status === 504) return 'timeout';
-  if (status === 409 || status === 417) return 'duplicate_document';
+  if (isDuplicateDocument(body)) return 'duplicate_document';
+  if (status === 417) return 'validation_failed';
   return 'connection_failed';
+}
+
+function isDuplicateDocument(body: unknown) {
+  if (!body || typeof body !== 'object') return false;
+
+  const record = body as Record<string, unknown>;
+  return ['exc_type', 'exception', 'exc'].some((key) => {
+    const value = record[key];
+    if (typeof value === 'string') {
+      return value.includes('DuplicateEntryError');
+    }
+    return false;
+  });
 }

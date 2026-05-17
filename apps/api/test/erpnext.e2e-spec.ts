@@ -190,6 +190,137 @@ describe('ERPNext integration foundation (e2e)', () => {
     );
   });
 
+  it('payment entry sync is idempotent when local ERPNext reference already exists', async () => {
+    const order = await createERPNextOrder(prisma, 'PE-LOCAL-REF');
+    const payment = await prisma.payment.create({
+      data: {
+        orderId: order.id,
+        amount: 50,
+        method: 'CASH',
+        source: 'BRANCH',
+        idempotencyKey: `erp-pe-local-${Math.random().toString(16).slice(2)}`,
+        erpnextPaymentEntryId: 'ACC-PAY-LOCAL-REF',
+      },
+    });
+    const outbox = await syncService.createDraftPaymentEntry(payment.id);
+    const createCountBefore = mock.documentCreateCount();
+
+    const processed = await syncService.processOutbox(outbox.id, dueNow());
+
+    expect(processed?.status).toBe(ERPNextSyncStatus.SUCCEEDED);
+    expect(processed?.erpnextName).toBe('ACC-PAY-LOCAL-REF');
+    expect(mock.documentCreateCount()).toBe(createCountBefore);
+    const updatedPayment = await prisma.payment.findUniqueOrThrow({
+      where: { id: payment.id },
+    });
+    expect(updatedPayment.status).toBe('POSTED');
+    const log = await prisma.eRPNextSyncLog.findFirstOrThrow({
+      where: { outboxId: outbox.id, status: ERPNextSyncStatus.SUCCEEDED },
+    });
+    expect(log.responsePayload).toEqual(
+      expect.objectContaining({ idempotent: true }),
+    );
+  });
+
+  it('resolves duplicate Payment Entry by safe ERPNext lookup and stores reference', async () => {
+    const originalBaseUrl = process.env.ERPNEXT_BASE_URL;
+    const order = await createERPNextOrder(prisma, 'PE-DUP-RESOLVE');
+    const payment = await prisma.payment.create({
+      data: {
+        orderId: order.id,
+        amount: 50,
+        method: 'CASH',
+        source: 'BRANCH',
+        idempotencyKey: `erp-pe-dup-${Math.random().toString(16).slice(2)}`,
+      },
+    });
+    const duplicateMock = await startERPNextMock({
+      duplicateDocuments: true,
+      paymentEntryLookupReferences: {
+        [payment.id]: 'ACC-PAY-DUP-RESOLVED',
+      },
+    });
+    process.env.ERPNEXT_BASE_URL = duplicateMock.baseUrl;
+    const outbox = await syncService.createDraftPaymentEntry(payment.id);
+
+    try {
+      const processed = await syncService.processOutbox(outbox.id, dueNow());
+
+      expect(processed?.status).toBe(ERPNextSyncStatus.SUCCEEDED);
+      expect(processed?.erpnextName).toBe('ACC-PAY-DUP-RESOLVED');
+    } finally {
+      process.env.ERPNEXT_BASE_URL = originalBaseUrl;
+      await duplicateMock.close();
+    }
+
+    const [updatedPayment, updatedOutbox, log, audit] = await Promise.all([
+      prisma.payment.findUniqueOrThrow({ where: { id: payment.id } }),
+      prisma.integrationOutbox.findUniqueOrThrow({ where: { id: outbox.id } }),
+      prisma.eRPNextSyncLog.findFirstOrThrow({
+        where: { outboxId: outbox.id, status: ERPNextSyncStatus.SUCCEEDED },
+      }),
+      prisma.auditLog.findFirstOrThrow({
+        where: {
+          action: 'erpnext.payment_entry_duplicate_resolved',
+          entityId: payment.id,
+        },
+      }),
+    ]);
+    expect(updatedPayment.erpnextPaymentEntryId).toBe('ACC-PAY-DUP-RESOLVED');
+    expect(updatedPayment.status).toBe('POSTED');
+    expect(updatedOutbox.status).toBe(ERPNextSyncStatus.SUCCEEDED);
+    expect(log.responsePayload).toEqual(
+      expect.objectContaining({
+        idempotent: true,
+        duplicateResolved: true,
+      }),
+    );
+    expect(audit.payload).toEqual(
+      expect.objectContaining({
+        erpnextPaymentEntryId: 'ACC-PAY-DUP-RESOLVED',
+      }),
+    );
+  });
+
+  it('keeps duplicate Payment Entry failed when no safe ERPNext lookup match exists', async () => {
+    const duplicateMock = await startERPNextMock({ duplicateDocuments: true });
+    const originalBaseUrl = process.env.ERPNEXT_BASE_URL;
+    process.env.ERPNEXT_BASE_URL = duplicateMock.baseUrl;
+    const order = await createERPNextOrder(prisma, 'PE-DUP-NO-MATCH');
+    const payment = await prisma.payment.create({
+      data: {
+        orderId: order.id,
+        amount: 50,
+        method: 'CASH',
+        source: 'BRANCH',
+        idempotencyKey: `erp-pe-dup-no-match-${Math.random()
+          .toString(16)
+          .slice(2)}`,
+      },
+    });
+    const outbox = await syncService.createDraftPaymentEntry(payment.id);
+
+    try {
+      await syncService.processOutbox(outbox.id, dueNow());
+    } finally {
+      process.env.ERPNEXT_BASE_URL = originalBaseUrl;
+      await duplicateMock.close();
+    }
+
+    const [updatedPayment, updatedOutbox, log] = await Promise.all([
+      prisma.payment.findUniqueOrThrow({ where: { id: payment.id } }),
+      prisma.integrationOutbox.findUniqueOrThrow({ where: { id: outbox.id } }),
+      prisma.eRPNextSyncLog.findFirstOrThrow({
+        where: { outboxId: outbox.id, errorCode: 'duplicate_document' },
+      }),
+    ]);
+    expect(updatedPayment.erpnextPaymentEntryId).toBeNull();
+    expect(updatedPayment.status).not.toBe('POSTED');
+    expect(updatedOutbox.status).not.toBe(ERPNextSyncStatus.SUCCEEDED);
+    expect(updatedOutbox.lastError).toBe('duplicate_document');
+    expect(log.errorCode).toBe('duplicate_document');
+  });
+
   it('timeout creates failed log and keeps local order unchanged', async () => {
     const slowMock = await startERPNextMock({ delayMs: 50 });
     const originalBaseUrl = process.env.ERPNEXT_BASE_URL;

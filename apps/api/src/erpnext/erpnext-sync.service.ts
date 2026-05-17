@@ -239,6 +239,16 @@ export class ERPNextSyncService {
       });
 
       if (!response.ok) {
+        const duplicateResolution =
+          await this.resolveDuplicatePaymentEntryIfSafe(
+            outbox,
+            requestPayload,
+            response,
+            startedAt,
+          );
+        if (duplicateResolution) {
+          return duplicateResolution;
+        }
         await this.recordFailedAttempt(
           outbox,
           requestPayload,
@@ -364,6 +374,114 @@ export class ERPNextSyncService {
         completedAt: new Date(),
       },
     });
+  }
+
+  private async resolveDuplicatePaymentEntryIfSafe(
+    outbox: IntegrationOutbox,
+    requestPayload: Record<string, unknown>,
+    response: ERPNextResponse,
+    startedAt: Date,
+  ) {
+    if (
+      outbox.operation !== ERPNextSyncOperation.CREATE_DRAFT_PAYMENT_ENTRY ||
+      outbox.sourceType !== 'payment' ||
+      response.errorCode !== 'duplicate_document' ||
+      !isUuid(outbox.sourceId)
+    ) {
+      return null;
+    }
+
+    const existingReference = await this.localERPNextReference(outbox);
+    if (existingReference) {
+      return this.localReferenceSuccess(outbox);
+    }
+
+    const lookupPath = paymentEntryLookupPath(outbox.sourceId);
+    const lookupResponse = await this.client.request({
+      method: 'GET',
+      path: lookupPath,
+    });
+    const erpnextName = extractPaymentEntryLookupName(
+      lookupResponse.body,
+      outbox.sourceId,
+    );
+    if (!lookupResponse.ok || !erpnextName) {
+      this.logger?.warn({
+        module: 'erpnext',
+        event: 'erpnext_payment_entry_duplicate_lookup_unresolved',
+        entityType: 'integration_outbox',
+        entityId: outbox.id,
+        status: lookupResponse.ok ? 'not_found' : lookupResponse.errorCode,
+        details: {
+          sourceType: outbox.sourceType,
+          sourceId: outbox.sourceId,
+          operation: outbox.operation,
+        },
+      });
+      return null;
+    }
+
+    await this.prisma.eRPNextSyncLog.create({
+      data: {
+        outboxId: outbox.id,
+        operation: outbox.operation,
+        status: ERPNextSyncStatus.SUCCEEDED,
+        correlationId: outbox.correlationId,
+        requestPayload: redactERPNextPayload({
+          ...requestPayload,
+          duplicateResponse: response.body,
+          duplicateLookup: {
+            method: 'GET',
+            path: lookupPath,
+          },
+        }) as Prisma.InputJsonValue,
+        responsePayload: redactERPNextPayload({
+          data: { name: erpnextName, reference_no: outbox.sourceId },
+          idempotent: true,
+          duplicateResolved: true,
+          lookupResponse: lookupResponse.body,
+        }) as Prisma.InputJsonValue,
+        startedAt,
+        completedAt: new Date(),
+      },
+    });
+
+    const updated = await this.prisma.integrationOutbox.update({
+      where: { id: outbox.id },
+      data: {
+        status: ERPNextSyncStatus.SUCCEEDED,
+        erpnextName,
+        lastError: null,
+        lockedAt: null,
+      },
+    });
+    await this.applySuccessfulERPNextReference(updated);
+    await this.audit?.record({
+      action: 'erpnext.payment_entry_duplicate_resolved',
+      entityType: 'payment',
+      entityId: outbox.sourceId,
+      payload: {
+        outboxId: outbox.id,
+        erpnextPaymentEntryId: erpnextName,
+        idempotencyKey: outbox.idempotencyKey,
+      },
+    });
+    await this.events?.emit(
+      domainEvent({
+        name: 'ERPNextSyncSucceededEvent',
+        entityType: 'integration_outbox',
+        entityId: outbox.id,
+        correlationId: outbox.correlationId ?? undefined,
+        payload: {
+          operation: outbox.operation,
+          sourceType: outbox.sourceType,
+          sourceId: outbox.sourceId,
+          erpnextName,
+          duplicateResolved: true,
+        },
+      }),
+    );
+    return updated;
   }
 
   private async markFailed(outbox: IntegrationOutbox, error: string) {
@@ -662,7 +780,7 @@ export class ERPNextSyncService {
       },
     });
 
-    return this.prisma.integrationOutbox.update({
+    const updated = await this.prisma.integrationOutbox.update({
       where: { id: outbox.id },
       data: {
         status: ERPNextSyncStatus.SUCCEEDED,
@@ -671,6 +789,8 @@ export class ERPNextSyncService {
         lockedAt: null,
       },
     });
+    await this.applySuccessfulERPNextReference(updated);
+    return updated;
   }
 
   private async localERPNextReference(outbox: IntegrationOutbox) {
@@ -722,6 +842,35 @@ function extractERPNextName(body: unknown): string | null {
     const name = (data as Record<string, unknown>).name;
     return typeof name === 'string' ? name : null;
   }
+
+  return typeof record.name === 'string' ? record.name : null;
+}
+
+function paymentEntryLookupPath(paymentId: string) {
+  const params = new URLSearchParams({
+    filters: JSON.stringify([
+      ['Payment Entry', 'reference_no', '=', paymentId],
+    ]),
+    fields: JSON.stringify(['name', 'reference_no', 'docstatus']),
+    limit_page_length: '1',
+  });
+  return `/api/resource/Payment Entry?${params.toString()}`;
+}
+
+function extractPaymentEntryLookupName(
+  body: unknown,
+  paymentId: string,
+): string | null {
+  if (!body || typeof body !== 'object') return null;
+
+  const data = (body as Record<string, unknown>).data;
+  if (!Array.isArray(data) || data.length !== 1) return null;
+
+  const entry = data[0];
+  if (!entry || typeof entry !== 'object') return null;
+
+  const record = entry as Record<string, unknown>;
+  if (record.reference_no !== paymentId) return null;
 
   return typeof record.name === 'string' ? record.name : null;
 }

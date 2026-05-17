@@ -133,19 +133,30 @@ export function buildDraftPaymentEntryRequest(
       reference_date: dateKey(payment.collectedAt),
       awamir_payment_id: payment.id,
       awamir_order_id: payment.orderId,
-      references: payment.order.erpnextSalesInvoiceId
-        ? [
-            {
-              reference_doctype: 'Sales Invoice',
-              reference_name: payment.order.erpnextSalesInvoiceId,
-              total_amount: amount,
-              outstanding_amount: amount,
-              allocated_amount: amount,
-            },
-          ]
-        : [],
+      references: paymentEntryReferences(payment, amount),
     },
   };
+}
+
+function paymentEntryReferences(payment: PaymentForERPNext, amount: number) {
+  if (
+    !payment.order.erpnextSalesInvoiceId ||
+    !['INVOICE_SUBMITTED', 'ACCOUNTING_POSTED'].includes(
+      payment.order.accountingStatus,
+    )
+  ) {
+    return [];
+  }
+
+  return [
+    {
+      reference_doctype: 'Sales Invoice',
+      reference_name: payment.order.erpnextSalesInvoiceId,
+      total_amount: amount,
+      outstanding_amount: amount,
+      allocated_amount: amount,
+    },
+  ];
 }
 
 export function buildSubmitDocumentRequest(doctype: string, name: string) {

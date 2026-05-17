@@ -9,6 +9,7 @@ type MockOptions = {
   failDocuments?: boolean;
   delayMs?: number;
   duplicateDocuments?: boolean;
+  paymentEntryLookupReferences?: Record<string, string>;
 };
 
 export type ERPNextMockServer = {
@@ -28,6 +29,15 @@ export async function startERPNextMock(
   const server = createServer(async (request, response) => {
     if (request.url === '/api/method/ping' && request.method === 'GET') {
       return json(response, 200, { message: 'pong' });
+    }
+
+    if (request.method === 'GET' && isPaymentEntryLookupPath(request.url)) {
+      const referenceNo = paymentEntryReferenceNoFromLookup(request.url);
+      const name =
+        referenceNo && options.paymentEntryLookupReferences?.[referenceNo];
+      return json(response, 200, {
+        data: name ? [{ name, reference_no: referenceNo, docstatus: 0 }] : [],
+      });
     }
 
     if (request.method === 'POST' && isDocumentCreatePath(request.url)) {
@@ -126,6 +136,35 @@ function isDocumentCreatePath(url: string | undefined) {
     '/api/resource/Sales Invoice',
     '/api/resource/Payment Entry',
   ].includes(normalized);
+}
+
+function isPaymentEntryLookupPath(url: string | undefined) {
+  return decodeURIComponent(url ?? '').startsWith(
+    '/api/resource/Payment Entry?',
+  );
+}
+
+function paymentEntryReferenceNoFromLookup(url: string | undefined) {
+  const parsed = new URL(url ?? '/', 'http://127.0.0.1');
+  const filters = parsed.searchParams.get('filters');
+  if (!filters) return null;
+
+  try {
+    const decoded = JSON.parse(filters) as unknown;
+    if (!Array.isArray(decoded)) return null;
+
+    const referenceFilter = decoded.find(
+      (item) =>
+        Array.isArray(item) &&
+        item[0] === 'Payment Entry' &&
+        item[1] === 'reference_no' &&
+        item[2] === '=' &&
+        typeof item[3] === 'string',
+    );
+    return Array.isArray(referenceFilter) ? referenceFilter[3] : null;
+  } catch {
+    return null;
+  }
 }
 
 function parseBody(raw: string) {
