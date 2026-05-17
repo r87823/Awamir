@@ -11,6 +11,12 @@ export type LogoutDto = {
   refreshToken?: string;
 };
 
+export type ChangePasswordDto = {
+  username?: string;
+  currentPassword?: string;
+  newPassword?: string;
+};
+
 export type SessionUser = {
   actorId: string;
   branchId?: string;

@@ -45,6 +45,10 @@ export class AuthSessionsService {
     });
   }
 
+  async findSessionById(id: string) {
+    return this.prisma.authSession.findUnique({ where: { id } });
+  }
+
   async rotateSession(
     session: AuthSession,
     input: Omit<CreateSessionInput, 'userId'>,

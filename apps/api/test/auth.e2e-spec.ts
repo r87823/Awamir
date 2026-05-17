@@ -3,6 +3,7 @@ import { Test } from '@nestjs/testing';
 import request from 'supertest';
 import { seedAuthData, seedMasterData } from '../prisma/seed';
 import { AppModule } from '../src/app.module';
+import { hashPassword } from '../src/auth/password-policy';
 import { PrismaService } from '../src/prisma/prisma.service';
 
 describe('DB-backed auth (e2e)', () => {
@@ -26,6 +27,13 @@ describe('DB-backed auth (e2e)', () => {
 
   beforeEach(async () => {
     await prisma.authSession.deleteMany();
+    await prisma.user.deleteMany({
+      where: {
+        username: {
+          startsWith: 'auth_change_',
+        },
+      },
+    });
   });
 
   afterEach(() => {
@@ -403,4 +411,177 @@ describe('DB-backed auth (e2e)', () => {
 
     expect(response.body.count).toBe(before.body.count);
   });
+
+  it('changes password with the current password and revokes refresh sessions', async () => {
+    const user = await createAuthChangeUser(prisma, 'success');
+    const login = await request(app.getHttpServer())
+      .post('/auth/login')
+      .send({ username: user.username, password: 'secret123' })
+      .expect(201);
+
+    const response = await request(app.getHttpServer())
+      .post('/auth/change-password')
+      .send({
+        username: user.username,
+        currentPassword: 'secret123',
+        newPassword: 'new-secret123',
+      })
+      .expect(201);
+
+    expect(response.body).toEqual({ ok: true });
+    expect(JSON.stringify(response.body)).not.toContain('passwordHash');
+    expect(JSON.stringify(response.body)).not.toContain('refreshTokenHash');
+    expect(JSON.stringify(response.body)).not.toContain(
+      login.body.refreshToken,
+    );
+
+    const updated = await prisma.user.findUniqueOrThrow({
+      where: { id: user.id },
+    });
+    expect(updated.passwordHash).not.toBe('new-secret123');
+    expect(updated.passwordChangedAt).toEqual(expect.any(Date));
+    expect(updated.requirePasswordChange).toBe(false);
+
+    await request(app.getHttpServer())
+      .post('/auth/refresh')
+      .send({ refreshToken: login.body.refreshToken })
+      .expect(401);
+    await request(app.getHttpServer())
+      .post('/auth/login')
+      .send({ username: user.username, password: 'secret123' })
+      .expect(400);
+    await request(app.getHttpServer())
+      .post('/auth/login')
+      .send({ username: user.username, password: 'new-secret123' })
+      .expect(201);
+
+    const auditActions = await prisma.auditLog.findMany({
+      where: {
+        actorId: user.id,
+        action: {
+          in: [
+            'auth.password_changed',
+            'auth.sessions_revoked_due_to_password_change',
+          ],
+        },
+      },
+      select: { action: true },
+    });
+    expect(auditActions.map((entry) => entry.action).sort()).toEqual([
+      'auth.password_changed',
+      'auth.sessions_revoked_due_to_password_change',
+    ]);
+  });
+
+  it('rejects password change with the wrong current password without leaking input', async () => {
+    const user = await createAuthChangeUser(prisma, 'wrong_current');
+    const response = await request(app.getHttpServer())
+      .post('/auth/change-password')
+      .send({
+        username: user.username,
+        currentPassword: 'wrong-password',
+        newPassword: 'new-secret123',
+      })
+      .expect(400);
+
+    expect(response.body.code).toBe('INVALID_LOGIN');
+    expect(JSON.stringify(response.body)).not.toContain('wrong-password');
+    expect(JSON.stringify(response.body)).not.toContain('new-secret123');
+  });
+
+  it('rejects weak new password on password change', async () => {
+    const user = await createAuthChangeUser(prisma, 'weak');
+    const response = await request(app.getHttpServer())
+      .post('/auth/change-password')
+      .send({
+        username: user.username,
+        currentPassword: 'secret123',
+        newPassword: 'short',
+      })
+      .expect(400);
+
+    expect(response.body.code).toBe('ADMIN_PASSWORD_POLICY_VIOLATION');
+    expect(JSON.stringify(response.body)).not.toContain('short');
+  });
+
+  it('lets a forced-rotation user change password after login is blocked', async () => {
+    const user = await createAuthChangeUser(prisma, 'rotation', {
+      requirePasswordChange: true,
+    });
+
+    await request(app.getHttpServer())
+      .post('/auth/login')
+      .send({ username: user.username, password: 'secret123' })
+      .expect(403)
+      .expect(({ body }) => expect(body.code).toBe('PASSWORD_CHANGE_REQUIRED'));
+
+    await request(app.getHttpServer())
+      .post('/auth/change-password')
+      .send({
+        username: user.username,
+        currentPassword: 'secret123',
+        newPassword: 'new-secret123',
+      })
+      .expect(201)
+      .expect(({ body }) => expect(body.ok).toBe(true));
+
+    const updated = await prisma.user.findUniqueOrThrow({
+      where: { id: user.id },
+      select: { requirePasswordChange: true, passwordChangedAt: true },
+    });
+    expect(updated.requirePasswordChange).toBe(false);
+    expect(updated.passwordChangedAt).toEqual(expect.any(Date));
+
+    await request(app.getHttpServer())
+      .post('/auth/login')
+      .send({ username: user.username, password: 'new-secret123' })
+      .expect(201);
+  });
+
+  it('rejects revoked-session access tokens on auth session management endpoints', async () => {
+    const user = await createAuthChangeUser(prisma, 'revoked_access');
+    const login = await request(app.getHttpServer())
+      .post('/auth/login')
+      .send({ username: user.username, password: 'secret123' })
+      .expect(201);
+
+    await request(app.getHttpServer())
+      .post('/auth/change-password')
+      .send({
+        username: user.username,
+        currentPassword: 'secret123',
+        newPassword: 'new-secret123',
+      })
+      .expect(201);
+
+    await request(app.getHttpServer())
+      .get('/auth/sessions')
+      .set('Authorization', `Bearer ${login.body.accessToken}`)
+      .expect(401)
+      .expect(({ body }) => expect(body.code).toBe('TOKEN_SESSION_REVOKED'));
+
+    await request(app.getHttpServer())
+      .post('/auth/logout-all')
+      .set('Authorization', `Bearer ${login.body.accessToken}`)
+      .expect(401)
+      .expect(({ body }) => expect(body.code).toBe('TOKEN_SESSION_REVOKED'));
+  });
 });
+
+async function createAuthChangeUser(
+  prisma: PrismaService,
+  suffix: string,
+  options: { requirePasswordChange?: boolean } = {},
+) {
+  const username = `auth_change_${suffix}_${Date.now()}`;
+  return prisma.user.create({
+    data: {
+      username,
+      displayName: `Auth Change ${suffix}`,
+      passwordHash: await hashPassword('secret123'),
+      requirePasswordChange: options.requirePasswordChange ?? false,
+      passwordChangedAt: new Date(),
+      isActive: true,
+    },
+  });
+}

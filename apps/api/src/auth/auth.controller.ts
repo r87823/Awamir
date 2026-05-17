@@ -1,7 +1,12 @@
 import { Body, Controller, Get, Post, Req } from '@nestjs/common';
 import { Request } from 'express';
 import { AuthService } from './auth.service';
-import { LoginDto, LogoutDto, RefreshTokenDto } from './auth.types';
+import {
+  ChangePasswordDto,
+  LoginDto,
+  LogoutDto,
+  RefreshTokenDto,
+} from './auth.types';
 
 @Controller('auth')
 export class AuthController {
@@ -28,6 +33,14 @@ export class AuthController {
     return this.auth.logout(body, {
       authorization: authHeader(request),
       ip: clientIp(request),
+    });
+  }
+
+  @Post('change-password')
+  changePassword(@Body() body: ChangePasswordDto, @Req() request: Request) {
+    return this.auth.changePassword(body, {
+      ip: clientIp(request),
+      userAgent: userAgent(request),
     });
   }
 

@@ -13,12 +13,15 @@ import { PrismaService } from '../prisma/prisma.service';
 import { AuthRateLimiter } from './auth-rate-limiter.service';
 import { AuthSessionsService } from './auth-sessions.service';
 import {
+  ChangePasswordDto,
   LoginDto,
   LoginResponse,
   LogoutDto,
   RefreshTokenDto,
   SessionUser,
 } from './auth.types';
+import { hashPassword, validatePasswordPolicy } from './password-policy';
+
 import {
   AuthTokenPayload,
   accessTokenExpiresInSeconds,
@@ -246,6 +249,91 @@ export class AuthService {
     return { ok: true };
   }
 
+  async changePassword(
+    input: ChangePasswordDto,
+    options: { ip?: string; userAgent?: string } = {},
+  ) {
+    const username = input.username?.trim().toLowerCase();
+    if (!username || !input.currentPassword || !input.newPassword) {
+      await this.rateLimiter.recordFailure({ ip: options.ip, username });
+      await this.auditLoginFailure(username, options.ip, 'missing_credentials');
+      throw invalidLogin();
+    }
+    try {
+      await this.rateLimiter.assertCanAttempt({ ip: options.ip, username });
+    } catch (error) {
+      if (
+        error instanceof HttpException &&
+        error.getStatus() === HttpStatus.TOO_MANY_REQUESTS
+      ) {
+        await this.auditLoginFailure(username, options.ip, 'rate_limited');
+        await this.audit.record({
+          action: 'auth.rate_limited',
+          entityType: 'auth',
+          payload: { username, ip: options.ip ?? null, bucket: 'login' },
+        });
+      }
+      throw error;
+    }
+
+    const user = await this.prisma.user.findUnique({ where: { username } });
+    if (!user?.passwordHash || user.deletedAt) {
+      await this.rateLimiter.recordFailure({ ip: options.ip, username });
+      await this.auditLoginFailure(username, options.ip, 'invalid_credentials');
+      throw invalidLogin();
+    }
+
+    const passwordMatches = await bcrypt.compare(
+      input.currentPassword,
+      user.passwordHash,
+    );
+    if (!passwordMatches) {
+      await this.rateLimiter.recordFailure({ ip: options.ip, username });
+      await this.auditLoginFailure(username, options.ip, 'invalid_credentials');
+      throw invalidLogin();
+    }
+
+    if (!user.isActive) {
+      await this.rateLimiter.recordFailure({ ip: options.ip, username });
+      await this.auditLoginFailure(username, options.ip, 'inactive_user');
+      throw new ForbiddenException({
+        code: 'USER_INACTIVE',
+        message: 'User is inactive',
+      });
+    }
+
+    validatePasswordPolicy(input.newPassword);
+    const passwordHash = await hashPassword(input.newPassword);
+    await this.prisma.user.update({
+      where: { id: user.id },
+      data: {
+        passwordHash,
+        requirePasswordChange: false,
+        passwordChangedAt: new Date(),
+      },
+    });
+    const revoked = await this.sessions.revokeActiveSessionsForUser({
+      userId: user.id,
+      reason: 'password_change',
+    });
+    await this.rateLimiter.recordSuccess({ ip: options.ip, username });
+    await this.audit.record({
+      action: 'auth.password_changed',
+      actorId: user.id,
+      entityType: 'user',
+      entityId: user.id,
+      payload: { ip: options.ip ?? null, userAgent: options.userAgent ?? null },
+    });
+    await this.audit.record({
+      action: 'auth.sessions_revoked_due_to_password_change',
+      actorId: user.id,
+      entityType: 'user',
+      entityId: user.id,
+      payload: { reason: 'password_change', count: revoked.count },
+    });
+    return { ok: true };
+  }
+
   async logoutAll(authorization: string | undefined) {
     const payload = await this.requireActiveAccessToken(authorization);
     await this.sessions.revokeActiveSessionsForUser({
@@ -325,6 +413,20 @@ export class AuthService {
         code: 'TOKEN_USER_INACTIVE',
         message: 'Token subject is inactive or unavailable',
       });
+    }
+    if (payload.sid) {
+      const session = await this.sessions.findSessionById(payload.sid);
+      if (
+        !session ||
+        session.userId !== payload.sub ||
+        session.revokedAt ||
+        session.expiresAt <= new Date()
+      ) {
+        throw new UnauthorizedException({
+          code: 'TOKEN_SESSION_REVOKED',
+          message: 'Token session is no longer active',
+        });
+      }
     }
     return payload;
   }
