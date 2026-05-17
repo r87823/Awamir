@@ -58,4 +58,4 @@ Readiness can be `ok` or `degraded`; degraded readiness is explicit operational 
 
 Operational workflow statuses remain owned by Awamir Plus state helpers.
 
-For delivery, `DeliveryStatus.READY` means production/packing is complete. `DeliveryStatus.WAITING_BATCH` is the explicit delivery batching eligibility status. Delivery batching must use `WAITING_BATCH`; it must not infer eligibility from the broader word "ready".
+For delivery, `DeliveryStatus.WAITING_BATCH` is the canonical delivery batching eligibility status. `DeliveryStatus.READY` may exist on legacy or accounting-eligible records, but delivery batching must use `WAITING_BATCH` and must not infer eligibility from the broader word "ready".

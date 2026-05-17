@@ -26,7 +26,7 @@ const paymentInclude = {
   cashboxEntry: true,
 };
 
-// READY means production/packing complete; WAITING_BATCH means delivery batching eligible.
+// READY is retained for legacy/accounting eligibility; WAITING_BATCH is delivery batching eligibility.
 const invoiceEligibleDeliveryStatuses: DeliveryStatus[] = [
   'READY',
   'WAITING_BATCH',

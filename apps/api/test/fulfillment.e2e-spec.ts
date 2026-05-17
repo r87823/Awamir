@@ -222,7 +222,7 @@ describe('Fulfillment (e2e)', () => {
       where: { id: fixture.orderId },
     });
     expect(order.productionStatus).toBe('COMPLETED');
-    expect(order.deliveryStatus).toBe('READY');
+    expect(order.deliveryStatus).toBe('WAITING_BATCH');
     restoreOptionalEnv('ENABLE_PACKING_STAGE', original);
   });
 
@@ -297,16 +297,54 @@ describe('Fulfillment (e2e)', () => {
       }),
     );
 
+    const beforePackReadyOrders = await request(app.getHttpServer())
+      .get('/delivery/ready-orders')
+      .set('x-permissions', 'delivery:batch_create')
+      .expect(200);
+    expect(
+      beforePackReadyOrders.body.data.map((order: { id: string }) => order.id),
+    ).not.toContain(fixture.orderId);
+
+    const batchBeforePack = await request(app.getHttpServer())
+      .post('/delivery/batches')
+      .set('x-permissions', 'delivery:batch_create')
+      .send({
+        orderIds: [fixture.orderId],
+        idempotencyKey: `r26-enabled-before-pack:${fixture.orderId}`,
+      })
+      .expect(400);
+    expect(batchBeforePack.body.code).toBe(
+      'ORDER_NOT_READY_FOR_DELIVERY_BATCH',
+    );
+
     const packed = await request(app.getHttpServer())
       .post(`/fulfillment/orders/${fixture.orderId}/pack`)
       .set('x-permissions', 'packing:pack')
       .expect(201);
 
     expect(packed.body.deliveryStatus).toBe('WAITING_BATCH');
+
+    const afterPackReadyOrders = await request(app.getHttpServer())
+      .get('/delivery/ready-orders')
+      .set('x-permissions', 'delivery:batch_create')
+      .expect(200);
+    expect(
+      afterPackReadyOrders.body.data.map((order: { id: string }) => order.id),
+    ).toContain(fixture.orderId);
+
+    const batchAfterPack = await request(app.getHttpServer())
+      .post('/delivery/batches')
+      .set('x-permissions', 'delivery:batch_create')
+      .send({
+        orderIds: [fixture.orderId],
+        idempotencyKey: `r26-enabled-after-pack:${fixture.orderId}`,
+      })
+      .expect(201);
+    expect(batchAfterPack.body.orders).toHaveLength(1);
     restoreOptionalEnv('ENABLE_PACKING_STAGE', original);
   });
 
-  it('with packing disabled, order becomes ready directly', async () => {
+  it('with packing disabled, order becomes waiting_batch and can be batched', async () => {
     const original = process.env.ENABLE_PACKING_STAGE;
     process.env.ENABLE_PACKING_STAGE = 'false';
     const fixture = await createApprovedFulfillmentFixture(prisma, app);
@@ -318,7 +356,7 @@ describe('Fulfillment (e2e)', () => {
       where: { id: fixture.orderId },
     });
     expect(order.productionStatus).toBe('COMPLETED');
-    expect(order.deliveryStatus).toBe('READY');
+    expect(order.deliveryStatus).toBe('WAITING_BATCH');
     expect(order.packingRequired).toBe(false);
     expect(order.workflowSettingsSnapshot).toEqual(
       expect.objectContaining({
@@ -326,6 +364,24 @@ describe('Fulfillment (e2e)', () => {
         packingRequired: false,
       }),
     );
+
+    const readyOrders = await request(app.getHttpServer())
+      .get('/delivery/ready-orders')
+      .set('x-permissions', 'delivery:batch_create')
+      .expect(200);
+    expect(
+      readyOrders.body.data.map((readyOrder: { id: string }) => readyOrder.id),
+    ).toContain(fixture.orderId);
+
+    const batch = await request(app.getHttpServer())
+      .post('/delivery/batches')
+      .set('x-permissions', 'delivery:batch_create')
+      .send({
+        orderIds: [fixture.orderId],
+        idempotencyKey: `r26-disabled:${fixture.orderId}`,
+      })
+      .expect(201);
+    expect(batch.body.orders).toHaveLength(1);
     restoreOptionalEnv('ENABLE_PACKING_STAGE', original);
   });
 
@@ -498,6 +554,12 @@ async function createApprovedFulfillmentFixture(
 }
 
 async function deleteFulfillmentTestData(prisma: PrismaService) {
+  await prisma.deliveryBatchOrder.deleteMany({
+    where: { order: { orderNumber: { startsWith: 'ORD-FB_' } } },
+  });
+  await prisma.deliveryBatch.deleteMany({
+    where: { idempotencyKey: { startsWith: 'r26-' } },
+  });
   await prisma.workOrderItem.deleteMany();
   await prisma.workOrder.deleteMany();
   await prisma.eRPNextSyncLog.deleteMany();

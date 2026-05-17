@@ -710,7 +710,7 @@ function deliveryStatusAfterProductionReady(
   ) {
     return null;
   }
-  return packingRequired ? 'READY_FOR_PACKING' : 'READY';
+  return packingRequired ? 'READY_FOR_PACKING' : 'WAITING_BATCH';
 }
 
 function allWorkOrdersReady(
