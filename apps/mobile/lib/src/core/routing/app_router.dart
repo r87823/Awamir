@@ -2,6 +2,9 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../features/accounting/accounting_dashboard_screen.dart';
+import '../../features/admin/admin_dashboard_screen.dart';
+import '../../features/admin/admin_user_form_screen.dart';
+import '../../features/admin/admin_users_screen.dart';
 import '../../features/cashbox/cashbox_today_screen.dart';
 import '../../features/dashboard/dashboard_screen.dart';
 import '../../features/delivery/driver_batches_screen.dart';
@@ -83,6 +86,23 @@ GoRouter createAppRouter(AuthController auth) {
         path: '/notifications',
         builder: (context, state) => const NotificationsScreen(),
       ),
+      GoRoute(
+        path: '/admin',
+        builder: (context, state) => const AdminDashboardScreen(),
+      ),
+      GoRoute(
+        path: '/admin/users',
+        builder: (context, state) => const AdminUsersScreen(),
+      ),
+      GoRoute(
+        path: '/admin/users/new',
+        builder: (context, state) => const AdminUserFormScreen(),
+      ),
+      GoRoute(
+        path: '/admin/users/:id',
+        builder: (context, state) =>
+            AdminUserFormScreen(userId: state.pathParameters['id']!),
+      ),
     ],
   );
 }
@@ -98,4 +118,8 @@ const routePermissions = <String, List<String>>{
   '/cashbox': ['cashbox.view_own'],
   '/accounting': ['accounting.view_financials'],
   '/notifications': ['notifications:view'],
+  '/admin': ['admin.users.view', 'admin.users.manage', 'admin.roles.view'],
+  '/admin/users': ['admin.users.view'],
+  '/admin/users/new': ['admin.users.manage'],
+  '/admin/users/:id': ['admin.users.view'],
 };

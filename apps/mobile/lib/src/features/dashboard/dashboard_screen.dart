@@ -34,6 +34,11 @@ class DashboardScreen extends ConsumerWidget {
       _Tile('التنبيهات', Icons.notifications, '/notifications', [
         'notifications:view',
       ], badge: true),
+      _Tile('الإدارة', Icons.admin_panel_settings, '/admin', [
+        'admin.users.view',
+        'admin.users.manage',
+        'admin.roles.view',
+      ]),
     ];
     return AwamirScaffold(
       title: 'لوحة التشغيل',

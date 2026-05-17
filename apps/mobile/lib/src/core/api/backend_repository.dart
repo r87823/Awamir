@@ -113,4 +113,55 @@ class BackendRepository {
     final response = await _api.post('/notifications/read-all');
     return intFrom(response['updatedCount']) ?? 0;
   }
+
+  Future<PagedResponse> adminUsers({String? search}) async {
+    final query = <String, Object?>{'page': 1, 'pageSize': 50};
+    if (search != null && search.isNotEmpty) {
+      query['search'] = search;
+    }
+    return PagedResponse.fromJson(await _api.get('/admin/users', query: query));
+  }
+
+  Future<Map<String, Object?>> adminUser(String id) {
+    return _api.get('/admin/users/$id');
+  }
+
+  Future<Map<String, Object?>> createAdminUser(Map<String, Object?> body) {
+    return _api.post('/admin/users', data: body);
+  }
+
+  Future<Map<String, Object?>> updateAdminUser(
+    String id,
+    Map<String, Object?> body,
+  ) {
+    return _api.patch('/admin/users/$id', data: body);
+  }
+
+  Future<List<Map<String, Object?>>> adminRoles() async {
+    final response = await _api.get('/admin/roles');
+    return listFromResponse(response);
+  }
+
+  Future<List<Map<String, Object?>>> adminBranches() async {
+    final response = await _api.get('/admin/branches');
+    return listFromResponse(response);
+  }
+
+  Future<Map<String, Object?>> assignAdminUserRole(
+    String userId,
+    String roleId,
+  ) {
+    return _api.post('/admin/users/$userId/roles', data: {'roleId': roleId});
+  }
+}
+
+List<Map<String, Object?>> listFromResponse(Map<String, Object?> response) {
+  final raw = response['data'];
+  if (raw is List) {
+    return raw
+        .whereType<Map>()
+        .map((item) => Map<String, Object?>.from(item))
+        .toList();
+  }
+  return const [];
 }

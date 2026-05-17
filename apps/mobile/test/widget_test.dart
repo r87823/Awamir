@@ -10,12 +10,14 @@ import 'package:awamir_plus_mobile/src/core/auth/session.dart';
 import 'package:awamir_plus_mobile/src/core/auth/session_store.dart';
 import 'package:awamir_plus_mobile/src/core/providers.dart';
 import 'package:awamir_plus_mobile/src/core/routing/app_router.dart';
+import 'package:awamir_plus_mobile/src/features/admin/admin_user_form_screen.dart';
 import 'package:awamir_plus_mobile/src/features/dashboard/dashboard_screen.dart';
 import 'package:awamir_plus_mobile/src/features/notifications/notifications_screen.dart';
 import 'package:awamir_plus_mobile/src/features/orders/orders_list_screen.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:go_router/go_router.dart';
 
 void main() {
   testWidgets('app boots and shows login', (tester) async {
@@ -181,6 +183,184 @@ void main() {
     expect(find.text('2'), findsOneWidget);
   });
 
+  testWidgets('dashboard hides admin tile without admin permissions', (
+    tester,
+  ) async {
+    final auth = AuthController(MemorySessionStore());
+    await auth.setSession(
+      const UserSession(
+        token: 'token',
+        actorId: 'actor',
+        displayName: 'مستخدم',
+        permissions: {'orders:view'},
+      ),
+    );
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          authControllerProvider.overrideWithValue(auth),
+          backendRepositoryProvider.overrideWithValue(FakeOrdersRepository()),
+        ],
+        child: const MaterialApp(
+          home: Directionality(
+            textDirection: TextDirection.rtl,
+            child: DashboardScreen(),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('الإدارة'), findsNothing);
+  });
+
+  testWidgets('dashboard shows admin tile with admin permission', (
+    tester,
+  ) async {
+    final auth = AuthController(MemorySessionStore());
+    await auth.setSession(
+      const UserSession(
+        token: 'token',
+        actorId: 'actor',
+        displayName: 'مدير',
+        permissions: {'admin.users.view'},
+      ),
+    );
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          authControllerProvider.overrideWithValue(auth),
+          backendRepositoryProvider.overrideWithValue(FakeOrdersRepository()),
+        ],
+        child: const MaterialApp(
+          home: Directionality(
+            textDirection: TextDirection.rtl,
+            child: DashboardScreen(),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('الإدارة'), findsOneWidget);
+  });
+
+  testWidgets('admin create user form validates required fields', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          backendRepositoryProvider.overrideWithValue(FakeAdminRepository()),
+        ],
+        child: const MaterialApp(
+          home: Directionality(
+            textDirection: TextDirection.rtl,
+            child: AdminUserFormScreen(),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('إضافة المستخدم'));
+    await tester.pump();
+
+    expect(find.text('الحقل مطلوب'), findsAtLeastNWidgets(3));
+  });
+
+  testWidgets('admin create user sends requirePasswordChange by default', (
+    tester,
+  ) async {
+    final repo = FakeAdminRepository();
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [backendRepositoryProvider.overrideWithValue(repo)],
+        child: MaterialApp.router(
+          routerConfig: GoRouter(
+            initialLocation: '/admin/users/new',
+            routes: [
+              GoRoute(
+                path: '/admin/users/new',
+                builder: (context, state) => const Directionality(
+                  textDirection: TextDirection.rtl,
+                  child: AdminUserFormScreen(),
+                ),
+              ),
+              GoRoute(
+                path: '/admin/users/:id',
+                builder: (context, state) => const Directionality(
+                  textDirection: TextDirection.rtl,
+                  child: Text('تم الحفظ'),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.enterText(
+      find.widgetWithText(TextFormField, 'اسم المستخدم'),
+      'branch_operator_01',
+    );
+    await tester.enterText(
+      find.widgetWithText(TextFormField, 'الاسم'),
+      'Branch Operator 01',
+    );
+    await tester.enterText(
+      find.widgetWithText(TextFormField, 'البريد'),
+      'operator01@example.com',
+    );
+    await tester.enterText(
+      find.widgetWithText(TextFormField, 'كلمة مرور مؤقتة'),
+      'secret123',
+    );
+    await tester.tap(find.text('إضافة المستخدم'));
+    await tester.pumpAndSettle();
+
+    expect(repo.createdBody?['requirePasswordChange'], isTrue);
+    expect(repo.createdBody?['branchIds'], ['branch-riyadh']);
+    expect(repo.assignedRoleId, 'role-branch-operator');
+    expect(find.text('تم الحفظ'), findsOneWidget);
+  });
+
+  testWidgets('admin create user shows API error correlationId', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          backendRepositoryProvider.overrideWithValue(
+            FakeAdminRepository(failCreate: true),
+          ),
+        ],
+        child: const MaterialApp(
+          home: Directionality(
+            textDirection: TextDirection.rtl,
+            child: AdminUserFormScreen(),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.enterText(
+      find.widgetWithText(TextFormField, 'اسم المستخدم'),
+      'branch_operator_01',
+    );
+    await tester.enterText(
+      find.widgetWithText(TextFormField, 'الاسم'),
+      'Branch Operator 01',
+    );
+    await tester.enterText(
+      find.widgetWithText(TextFormField, 'كلمة مرور مؤقتة'),
+      'secret123',
+    );
+    await tester.tap(find.text('إضافة المستخدم'));
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('corr-admin-test'), findsOneWidget);
+  });
+
   testWidgets('notifications screen lists and marks read', (tester) async {
     final repo = FakeNotificationsRepository();
     await tester.pumpWidget(
@@ -262,4 +442,67 @@ class FakeNotificationsRepository extends FakeOrdersRepository {
 
   @override
   Future<int> markAllNotificationsRead() async => 1;
+}
+
+class FakeAdminRepository extends FakeOrdersRepository {
+  FakeAdminRepository({this.failCreate = false});
+
+  final bool failCreate;
+  Map<String, Object?>? createdBody;
+  String? assignedRoleId;
+
+  @override
+  Future<List<Map<String, Object?>>> adminBranches() async {
+    return [
+      {
+        'id': 'branch-riyadh',
+        'code': 'RIYADH',
+        'nameAr': 'الرياض',
+        'nameEn': 'Riyadh',
+      },
+    ];
+  }
+
+  @override
+  Future<List<Map<String, Object?>>> adminRoles() async {
+    return [
+      {
+        'id': 'role-branch-operator',
+        'code': 'BRANCH_OPERATOR',
+        'nameAr': 'مشغل فرع',
+        'nameEn': 'Branch Operator',
+      },
+    ];
+  }
+
+  @override
+  Future<Map<String, Object?>> createAdminUser(
+    Map<String, Object?> body,
+  ) async {
+    if (failCreate) {
+      throw const ApiException(
+        ApiError(
+          code: 'ADMIN_CREATE_FAILED',
+          message: 'تعذر إنشاء المستخدم',
+          correlationId: 'corr-admin-test',
+        ),
+      );
+    }
+    createdBody = body;
+    return {
+      'id': 'user-1',
+      'username': body['username'],
+      'displayName': body['displayName'],
+      'requirePasswordChange': body['requirePasswordChange'],
+    };
+  }
+
+  @override
+  Future<Map<String, Object?>> assignAdminUserRole(
+    String userId,
+    String roleId,
+  ) async {
+    assignedRoleId = roleId;
+    return {'id': userId, 'roleId': roleId};
+  }
 }
