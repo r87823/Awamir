@@ -12,8 +12,14 @@ class PagedResponse {
   final int total;
 
   factory PagedResponse.fromJson(Map<String, Object?> json) {
+    final items =
+        json['data'] ??
+        json['users'] ??
+        json['orders'] ??
+        json['items'] ??
+        const [];
     return PagedResponse(
-      data: (json['data'] as List? ?? const [])
+      data: (items as List? ?? const [])
           .whereType<Map>()
           .map((item) => Map<String, Object?>.from(item))
           .toList(),

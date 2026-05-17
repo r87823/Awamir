@@ -49,6 +49,20 @@ void main() {
     expect(error.supportMessage, contains('corr-test'));
   });
 
+  test('parses admin users paged response shape', () {
+    final page = PagedResponse.fromJson({
+      'users': [
+        {'id': 'user-1', 'username': 'branch_operator_01'},
+      ],
+      'page': 1,
+      'pageSize': 20,
+      'total': 1,
+    });
+
+    expect(page.data.single['username'], 'branch_operator_01');
+    expect(page.total, 1);
+  });
+
   test(
     'macOS debug session fallback stores session without secure storage',
     () async {
