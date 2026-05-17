@@ -70,8 +70,10 @@ describe('Observability (e2e)', () => {
 
   it('allows configured CORS origins without wildcard credentials', async () => {
     const originalOrigins = process.env.CORS_ORIGINS;
+    const originalAllowedOrigins = process.env.CORS_ALLOWED_ORIGINS;
     const originalCredentials = process.env.CORS_CREDENTIALS;
-    process.env.CORS_ORIGINS = 'https://app.example.test';
+    delete process.env.CORS_ORIGINS;
+    process.env.CORS_ALLOWED_ORIGINS = 'https://app.example.test';
     process.env.CORS_CREDENTIALS = 'true';
 
     try {
@@ -86,6 +88,7 @@ describe('Observability (e2e)', () => {
       expect(response.headers['access-control-allow-credentials']).toBe('true');
     } finally {
       restoreOptionalEnv('CORS_ORIGINS', originalOrigins);
+      restoreOptionalEnv('CORS_ALLOWED_ORIGINS', originalAllowedOrigins);
       restoreOptionalEnv('CORS_CREDENTIALS', originalCredentials);
     }
   });

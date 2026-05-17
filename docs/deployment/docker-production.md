@@ -43,6 +43,8 @@ Alternative deployment modes:
 
 Only the API is bound to the host. By default it binds to `127.0.0.1:${PORT}` so a host reverse proxy or load balancer can terminate TLS. Set `API_BIND_ADDRESS=0.0.0.0` only when the host firewall or private load balancer restricts access.
 
+A public `0.0.0.0:3000` API bind is not production-ready unless port `3000` is blocked from the public internet. Public HTTPS should terminate on the reverse proxy or load balancer, not directly on the NestJS container port.
+
 Postgres and Redis are internal Compose services and must not be exposed publicly.
 
 ## Environment
@@ -60,13 +62,21 @@ Required groups:
 
 - Database: `DATABASE_URL`, `POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_PASSWORD`
 - Redis: `REDIS_URL`
-- Auth: `AUTH_JWT_SECRET`
+- Auth: `AUTH_JWT_SECRET`, `AUTH_REFRESH_TOKEN_TTL_DAYS`
 - ERPNext: `ERPNEXT_BASE_URL`, `ERPNEXT_API_KEY`, `ERPNEXT_API_SECRET`, `ERPNEXT_COMPANY`
 - ERPNext mapping: warehouse, income, receivable, and payment accounts
 - Runtime: `NODE_ENV=production`, `PORT`, `API_BIND_ADDRESS`
 - Images: `AWAMIR_API_IMAGE`, `AWAMIR_WORKER_IMAGE`
 
 Secrets must come from the host env file or a secret manager. Never place ERPNext credentials in Flutter.
+
+Security env requirements:
+
+- `AUTH_JWT_SECRET` must be unique, random, and at least 32 characters in staging/production.
+- `AUTH_JWT_EXPIRES_IN_SECONDS` should be `900` to `3600` in production.
+- `CORS_ALLOWED_ORIGINS` must be explicit; do not use `*` in production.
+- `CORS_ORIGINS` is kept only as a backward-compatible alias.
+- `CORS_CREDENTIALS=false` unless cookie auth is intentionally added.
 
 ## Image Tagging
 
@@ -307,12 +317,20 @@ Use that command carefully in production because it creates real operational and
 
 - [ ] `.env.production` exists only on the production host and has `chmod 600`.
 - [ ] `NODE_ENV=production`.
+- [ ] `AUTH_JWT_SECRET` is unique, random, and at least 32 characters.
+- [ ] `AUTH_JWT_EXPIRES_IN_SECONDS` is set to a production-safe TTL such as `3600`.
+- [ ] `CORS_ALLOWED_ORIGINS` is explicit and not `*`.
 - [ ] `ERPNEXT_WORKER_ENABLED=false` for API and `true` for worker.
 - [ ] Postgres and Redis have no public ports.
-- [ ] API is behind HTTPS.
+- [ ] API is behind HTTPS and the raw API container port is not publicly reachable.
+- [ ] Host firewall allows only approved public ports, typically `22`, `80`, and `443`.
 - [ ] Backups are tested before production migration.
 - [ ] `/health/live` and `/health/ready` pass after deploy.
 - [ ] Worker container is running and healthy.
+- [ ] Login, refresh, logout, and password change pass after deploy.
+- [ ] Credential hygiene endpoint reviewed and demo credentials retired.
+- [ ] Admin settings masks ERPNext API secrets.
+- [ ] Redis auth rate-limit keys appear after a controlled auth-abuse smoke.
 - [ ] Logs contain no JWTs, ERPNext API secrets, database URLs, or passwords.
 - [ ] No Flutter build contains ERPNext URL or credentials.
 
@@ -323,3 +341,4 @@ Use that command carefully in production because it creates real operational and
 - Database rollback remains manual and must be planned per migration.
 - Rate limiting and WAF/CDN policy should be finalized before public production exposure.
 - Secret rotation procedure should be rehearsed for JWT and ERPNext credentials.
+- SSH should be key-only with named operators before production launch.

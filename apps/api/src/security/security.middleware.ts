@@ -62,7 +62,8 @@ function applyCors(request: Request, response: Response) {
 }
 
 function configuredOrigins() {
-  const configured = process.env.CORS_ORIGINS;
+  const configured =
+    process.env.CORS_ALLOWED_ORIGINS ?? process.env.CORS_ORIGINS;
   if (configured) {
     return configured
       .split(',')
