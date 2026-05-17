@@ -10,7 +10,7 @@ export class ProductsController {
 
   @Get('active')
   @RequirePermissions('orders:create')
-  listActiveProducts() {
-    return { data: this.masterData.listActiveOrderProducts() };
+  async listActiveProducts() {
+    return { data: await this.masterData.listActiveOrderProducts() };
   }
 }
