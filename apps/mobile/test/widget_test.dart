@@ -184,6 +184,7 @@ void main() {
 
     expect(find.textContaining('FATAYER_SPINACH'), findsOneWidget);
     expect(find.widgetWithText(TextField, 'معرف المنتج'), findsNothing);
+    expect(find.byTooltip('رجوع'), findsOneWidget);
   });
 
   testWidgets('dashboard shows unread notifications badge', (tester) async {

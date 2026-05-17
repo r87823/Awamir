@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 
 import '../providers.dart';
 
@@ -9,6 +10,8 @@ class AwamirScaffold extends ConsumerWidget {
     required this.body,
     this.actions,
     this.floatingActionButton,
+    this.showBackButton = false,
+    this.backPath = '/',
     super.key,
   });
 
@@ -16,12 +19,27 @@ class AwamirScaffold extends ConsumerWidget {
   final Widget body;
   final List<Widget>? actions;
   final Widget? floatingActionButton;
+  final bool showBackButton;
+  final String backPath;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     return Scaffold(
       appBar: AppBar(
         title: Text(title),
+        leading: showBackButton
+            ? IconButton(
+                tooltip: 'رجوع',
+                onPressed: () {
+                  if (context.canPop()) {
+                    context.pop();
+                  } else {
+                    context.go(backPath);
+                  }
+                },
+                icon: const Icon(Icons.arrow_back),
+              )
+            : null,
         actions: [
           ...?actions,
           IconButton(

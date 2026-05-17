@@ -37,6 +37,8 @@ class _CreateOrderScreenState extends ConsumerState<CreateOrderScreen> {
     }
     return AwamirScaffold(
       title: 'طلب جديد',
+      showBackButton: true,
+      backPath: '/orders',
       body: FutureBuilder<List<Map<String, Object?>>>(
         future: productsFuture,
         builder: (context, snapshot) {
