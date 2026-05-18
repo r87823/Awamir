@@ -5,6 +5,7 @@ import '../../core/api/api_error.dart';
 import '../../core/providers.dart';
 import '../../core/ui/async_state_view.dart';
 import '../../core/ui/awamir_scaffold.dart';
+import '../../core/ui/status_widgets.dart';
 
 class DriverBatchesScreen extends ConsumerStatefulWidget {
   const DriverBatchesScreen({super.key});
@@ -43,7 +44,23 @@ class _DriverBatchesScreenState extends ConsumerState<DriverBatchesScreen> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(batch['batchNumber']?.toString() ?? id),
-                    Text('الحالة: ${batch['status'] ?? ''}'),
+                    StatusChip(value: batch['status']),
+                    for (final order in _orders(batch))
+                      ListTile(
+                        contentPadding: EdgeInsets.zero,
+                        title: Text(displayValue(order['orderNumber'])),
+                        subtitle: Text(displayValue(order['customerName'])),
+                        trailing: TextButton(
+                          onPressed: () => run(
+                            () => repo.markBatchOrderReturned(
+                              batchId: id,
+                              orderId: order['id'].toString(),
+                              reason: 'مرتجع من التطبيق',
+                            ),
+                          ),
+                          child: const Text('مرتجع'),
+                        ),
+                      ),
                     Wrap(
                       spacing: 8,
                       children: [
@@ -86,4 +103,13 @@ class _DriverBatchesScreenState extends ConsumerState<DriverBatchesScreen> {
       setState(() => message = exception.error.supportMessage);
     }
   }
+}
+
+List<Map<String, Object?>> _orders(Map<String, Object?> batch) {
+  final raw = batch['orders'];
+  if (raw is! List) return const [];
+  return raw
+      .whereType<Map>()
+      .map((item) => Map<String, Object?>.from(item))
+      .toList();
 }

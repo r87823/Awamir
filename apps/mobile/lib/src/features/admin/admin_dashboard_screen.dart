@@ -26,6 +26,18 @@ class AdminDashboardScreen extends StatelessWidget {
               ),
             ),
           ),
+          PermissionGuard(
+            permissions: const ['admin.reports.view'],
+            child: Card(
+              child: ListTile(
+                leading: const Icon(Icons.analytics),
+                title: const Text('التقارير'),
+                subtitle: const Text('تقارير التشغيل والماليات والتكامل'),
+                trailing: const Icon(Icons.chevron_left),
+                onTap: () => context.go('/reports'),
+              ),
+            ),
+          ),
         ],
       ),
     );

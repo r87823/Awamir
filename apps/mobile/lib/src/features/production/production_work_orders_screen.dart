@@ -5,6 +5,7 @@ import '../../core/api/api_error.dart';
 import '../../core/providers.dart';
 import '../../core/ui/async_state_view.dart';
 import '../../core/ui/awamir_scaffold.dart';
+import '../../core/ui/status_widgets.dart';
 
 class ProductionWorkOrdersScreen extends ConsumerStatefulWidget {
   const ProductionWorkOrdersScreen({super.key});
@@ -37,37 +38,64 @@ class _ProductionWorkOrdersScreenState
             }
             final item = page.data[index - (message == null ? 0 : 1)];
             final id = item['id'].toString();
+            final status = item['status']?.toString();
             return Card(
               child: Padding(
                 padding: const EdgeInsets.all(12),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text('أمر عمل: $id'),
-                    Text('الحالة: ${item['status'] ?? ''}'),
+                    Text(
+                      displayValue(item['workOrderNumber'] ?? id),
+                      style: Theme.of(context).textTheme.titleMedium,
+                    ),
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: [
+                        StatusChip(value: status),
+                        StatusChip(value: item['departmentNameAr']),
+                      ],
+                    ),
+                    InfoRow(label: 'الطلب', value: item['orderNumber']),
+                    InfoRow(label: 'المنتج', value: item['productNameAr']),
+                    InfoRow(label: 'الكمية', value: item['quantity']),
                     Wrap(
                       spacing: 8,
                       children: [
                         TextButton(
-                          onPressed: () =>
-                              run(() => repo.workOrderAction(id, 'accept')),
+                          onPressed: _canAccept(status)
+                              ? () => run(
+                                  () => repo.workOrderAction(id, 'accept'),
+                                )
+                              : null,
                           child: const Text('استلام'),
                         ),
                         TextButton(
-                          onPressed: () => run(
-                            () => repo.workOrderAction(id, 'in-production'),
-                          ),
+                          onPressed: _canStart(status)
+                              ? () => run(
+                                  () =>
+                                      repo.workOrderAction(id, 'in-production'),
+                                )
+                              : null,
                           child: const Text('بدء'),
                         ),
                         TextButton(
-                          onPressed: () =>
-                              run(() => repo.workOrderAction(id, 'ready')),
+                          onPressed: _canReady(status)
+                              ? () =>
+                                    run(() => repo.workOrderAction(id, 'ready'))
+                              : null,
                           child: const Text('جاهز'),
                         ),
                         TextButton(
-                          onPressed: () => run(
-                            () => repo.delayWorkOrder(id, 'MATERIAL_SHORTAGE'),
-                          ),
+                          onPressed: _canDelay(status)
+                              ? () => run(
+                                  () => repo.delayWorkOrder(
+                                    id,
+                                    'MATERIAL_SHORTAGE',
+                                  ),
+                                )
+                              : null,
                           child: const Text('تأخير'),
                         ),
                       ],
@@ -94,3 +122,13 @@ class _ProductionWorkOrdersScreenState
     }
   }
 }
+
+bool _canAccept(String? status) => status == 'CREATED' || status == 'PENDING';
+
+bool _canStart(String? status) => status == 'ACCEPTED';
+
+bool _canReady(String? status) =>
+    status == 'ACCEPTED' || status == 'IN_PRODUCTION' || status == 'DELAYED';
+
+bool _canDelay(String? status) =>
+    status == 'ACCEPTED' || status == 'IN_PRODUCTION';

@@ -12,9 +12,11 @@ import 'package:awamir_plus_mobile/src/core/providers.dart';
 import 'package:awamir_plus_mobile/src/core/routing/app_router.dart';
 import 'package:awamir_plus_mobile/src/features/admin/admin_user_form_screen.dart';
 import 'package:awamir_plus_mobile/src/features/dashboard/dashboard_screen.dart';
+import 'package:awamir_plus_mobile/src/features/login/change_password_screen.dart';
 import 'package:awamir_plus_mobile/src/features/orders/create_order_screen.dart';
 import 'package:awamir_plus_mobile/src/features/notifications/notifications_screen.dart';
 import 'package:awamir_plus_mobile/src/features/orders/orders_list_screen.dart';
+import 'package:awamir_plus_mobile/src/features/payments/payment_collection_screen.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -163,7 +165,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('ORD-1'), findsOneWidget);
-    expect(find.textContaining('عميل'), findsOneWidget);
+    expect(find.text('عميل'), findsOneWidget);
   });
 
   testWidgets('create order screen loads active products', (tester) async {
@@ -185,6 +187,88 @@ void main() {
     expect(find.textContaining('FATAYER_SPINACH'), findsOneWidget);
     expect(find.widgetWithText(TextField, 'معرف المنتج'), findsNothing);
     expect(find.byTooltip('رجوع'), findsOneWidget);
+  });
+
+  testWidgets('create order screen supports multiple product lines', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          backendRepositoryProvider.overrideWithValue(FakeOrdersRepository()),
+        ],
+        child: const MaterialApp(
+          home: Directionality(
+            textDirection: TextDirection.rtl,
+            child: CreateOrderScreen(),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('إضافة منتج'));
+    await tester.pumpAndSettle();
+
+    expect(find.widgetWithText(TextField, 'الكمية'), findsNWidgets(2));
+  });
+
+  testWidgets('payment screen selects order and defaults remaining amount', (
+    tester,
+  ) async {
+    final repo = FakeOrdersRepository();
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [backendRepositoryProvider.overrideWithValue(repo)],
+        child: const MaterialApp(
+          home: Directionality(
+            textDirection: TextDirection.rtl,
+            child: PaymentCollectionScreen(),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('ORD-1'), findsOneWidget);
+    expect(find.widgetWithText(TextField, 'المبلغ'), findsOneWidget);
+    await tester.tap(find.text('تحصيل'));
+    await tester.pumpAndSettle();
+    expect(repo.collectedBody?['orderId'], 'order-1');
+  });
+
+  testWidgets('change password screen submits credential update', (
+    tester,
+  ) async {
+    final repo = FakeOrdersRepository();
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [backendRepositoryProvider.overrideWithValue(repo)],
+        child: const MaterialApp(
+          home: Directionality(
+            textDirection: TextDirection.rtl,
+            child: ChangePasswordScreen(),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.enterText(
+      find.widgetWithText(TextField, 'اسم المستخدم'),
+      'branch_operator_01',
+    );
+    await tester.enterText(
+      find.widgetWithText(TextField, 'كلمة المرور الحالية'),
+      'old-password',
+    );
+    await tester.enterText(
+      find.widgetWithText(TextField, 'كلمة المرور الجديدة'),
+      'NewPassword123!',
+    );
+    await tester.tap(find.widgetWithText(FilledButton, 'تغيير كلمة المرور'));
+    await tester.pumpAndSettle();
+
+    expect(repo.changedPasswordUsername, 'branch_operator_01');
+    expect(find.textContaining('تم تغيير كلمة المرور'), findsOneWidget);
   });
 
   testWidgets('dashboard shows unread notifications badge', (tester) async {
@@ -423,8 +507,11 @@ void main() {
 class FakeOrdersRepository extends BackendRepository {
   FakeOrdersRepository() : super(AwamirApiClient(baseUrl: 'http://localhost'));
 
+  Map<String, Object?>? collectedBody;
+  String? changedPasswordUsername;
+
   @override
-  Future<PagedResponse> orders({String? status}) async {
+  Future<PagedResponse> orders({String? status, String? customerName}) async {
     return PagedResponse.fromJson({
       'data': [
         {
@@ -432,6 +519,9 @@ class FakeOrdersRepository extends BackendRepository {
           'orderNumber': 'ORD-1',
           'customerName': 'عميل',
           'status': 'DRAFT',
+          'grandTotal': '25',
+          'paidAmount': '0',
+          'remainingAmount': '25',
         },
       ],
       'page': 1,
@@ -450,6 +540,22 @@ class FakeOrdersRepository extends BackendRepository {
         'erpnextItemCode': 'ERP-FATAYER-SPINACH',
       },
     ];
+  }
+
+  @override
+  Future<Map<String, Object?>> collectPayment(Map<String, Object?> body) async {
+    collectedBody = body;
+    return {'id': 'payment-1', ...body};
+  }
+
+  @override
+  Future<Map<String, Object?>> changePassword({
+    required String username,
+    required String currentPassword,
+    required String newPassword,
+  }) async {
+    changedPasswordUsername = username;
+    return {'ok': true};
   }
 }
 

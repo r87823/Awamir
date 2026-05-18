@@ -6,9 +6,11 @@ import '../../features/admin/admin_dashboard_screen.dart';
 import '../../features/admin/admin_user_form_screen.dart';
 import '../../features/admin/admin_users_screen.dart';
 import '../../features/cashbox/cashbox_today_screen.dart';
+import '../../features/delivery/delivery_dispatch_screen.dart';
 import '../../features/dashboard/dashboard_screen.dart';
 import '../../features/delivery/driver_batches_screen.dart';
 import '../../features/fulfillment/fulfillment_queue_screen.dart';
+import '../../features/login/change_password_screen.dart';
 import '../../features/login/login_screen.dart';
 import '../../features/notifications/notifications_screen.dart';
 import '../../features/orders/create_order_screen.dart';
@@ -17,6 +19,7 @@ import '../../features/orders/orders_list_screen.dart';
 import '../../features/orders/supervisor_queue_screen.dart';
 import '../../features/payments/payment_collection_screen.dart';
 import '../../features/production/production_work_orders_screen.dart';
+import '../../features/reports/reports_screen.dart';
 import '../providers.dart';
 
 final appRouterProvider = Provider<GoRouter>((ref) {
@@ -30,8 +33,11 @@ GoRouter createAppRouter(AuthController auth) {
     refreshListenable: auth,
     redirect: (context, state) {
       final loggingIn = state.matchedLocation == '/login';
+      final changingPassword = state.matchedLocation == '/change-password';
       if (!auth.isReady) return loggingIn ? null : '/login';
-      if (!auth.isAuthenticated) return loggingIn ? null : '/login';
+      if (!auth.isAuthenticated) {
+        return loggingIn || changingPassword ? null : '/login';
+      }
       if (loggingIn) return '/';
 
       final required = routePermissions[state.matchedLocation] ?? const [];
@@ -40,6 +46,10 @@ GoRouter createAppRouter(AuthController auth) {
     },
     routes: [
       GoRoute(path: '/login', builder: (context, state) => const LoginScreen()),
+      GoRoute(
+        path: '/change-password',
+        builder: (context, state) => const ChangePasswordScreen(),
+      ),
       GoRoute(path: '/', builder: (context, state) => const DashboardScreen()),
       GoRoute(
         path: '/orders',
@@ -71,6 +81,10 @@ GoRouter createAppRouter(AuthController auth) {
         builder: (context, state) => const DriverBatchesScreen(),
       ),
       GoRoute(
+        path: '/delivery/dispatch',
+        builder: (context, state) => const DeliveryDispatchScreen(),
+      ),
+      GoRoute(
         path: '/payments',
         builder: (context, state) => const PaymentCollectionScreen(),
       ),
@@ -85,6 +99,10 @@ GoRouter createAppRouter(AuthController auth) {
       GoRoute(
         path: '/notifications',
         builder: (context, state) => const NotificationsScreen(),
+      ),
+      GoRoute(
+        path: '/reports',
+        builder: (context, state) => const ReportsScreen(),
       ),
       GoRoute(
         path: '/admin',
@@ -114,10 +132,16 @@ const routePermissions = <String, List<String>>{
   '/fulfillment': ['orders:view'],
   '/production': ['production_operator'],
   '/delivery': ['delivery_driver'],
+  '/delivery/dispatch': ['delivery:batch_create', 'delivery:assign_driver'],
   '/payments': ['payment.collect_branch', 'payment.collect_delivery'],
   '/cashbox': ['cashbox.view_own'],
   '/accounting': ['accounting.view_financials'],
   '/notifications': ['notifications:view'],
+  '/reports': [
+    'reports.view_operations',
+    'reports.view_financials',
+    'reports.view_erpnext',
+  ],
   '/admin': ['admin.users.view', 'admin.users.manage', 'admin.roles.view'],
   '/admin/users': ['admin.users.view'],
   '/admin/users/new': ['admin.users.manage'],

@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 
 import '../../core/api/api_error.dart';
 import '../../core/auth/session.dart';
@@ -60,6 +61,10 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                         )
                       : const Text('دخول'),
                 ),
+                TextButton(
+                  onPressed: () => context.go('/change-password'),
+                  child: const Text('تغيير كلمة المرور'),
+                ),
               ],
             ),
           ),
@@ -81,6 +86,10 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
           .read(authControllerProvider)
           .setSession(UserSession.fromJson(response));
     } on ApiException catch (exception) {
+      if (exception.error.code == 'PASSWORD_CHANGE_REQUIRED' && mounted) {
+        context.go('/change-password');
+        return;
+      }
       setState(() => error = exception.error.supportMessage);
     } finally {
       if (mounted) setState(() => loading = false);

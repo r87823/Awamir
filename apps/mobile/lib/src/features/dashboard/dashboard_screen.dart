@@ -21,6 +21,10 @@ class DashboardScreen extends ConsumerWidget {
         'production_operator',
       ]),
       _Tile('التوصيل', Icons.local_shipping, '/delivery', ['delivery_driver']),
+      _Tile('إدارة التوصيل', Icons.route, '/delivery/dispatch', [
+        'delivery:batch_create',
+        'delivery:assign_driver',
+      ]),
       _Tile('المدفوعات', Icons.payments, '/payments', [
         'payment.collect_branch',
         'payment.collect_delivery',
@@ -34,6 +38,11 @@ class DashboardScreen extends ConsumerWidget {
       _Tile('التنبيهات', Icons.notifications, '/notifications', [
         'notifications:view',
       ], badge: true),
+      _Tile('التقارير', Icons.analytics, '/reports', [
+        'reports.view_operations',
+        'reports.view_financials',
+        'reports.view_erpnext',
+      ]),
       _Tile('الإدارة', Icons.admin_panel_settings, '/admin', [
         'admin.users.view',
         'admin.users.manage',

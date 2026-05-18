@@ -15,11 +15,12 @@ class CreateOrderScreen extends ConsumerStatefulWidget {
 
 class _CreateOrderScreenState extends ConsumerState<CreateOrderScreen> {
   final customerName = TextEditingController(text: 'عميل جديد');
+  final customerPhone = TextEditingController();
+  final customerAddress = TextEditingController();
+  final notes = TextEditingController();
   final branchId = TextEditingController();
-  final quantity = TextEditingController(text: '1');
-  final unitPrice = TextEditingController(text: '10');
   late Future<List<Map<String, Object?>>> productsFuture;
-  String? selectedProductId;
+  final lines = <_OrderLine>[_OrderLine()];
   String? error;
   bool loading = false;
 
@@ -54,9 +55,9 @@ class _CreateOrderScreenState extends ConsumerState<CreateOrderScreen> {
             );
           }
           final products = snapshot.data ?? const [];
-          selectedProductId ??= products.isEmpty
-              ? null
-              : products.first['id']?.toString();
+          for (final line in lines) {
+            line.ensureProduct(products);
+          }
           return ListView(
             padding: const EdgeInsets.all(16),
             children: [
@@ -69,27 +70,45 @@ class _CreateOrderScreenState extends ConsumerState<CreateOrderScreen> {
                 controller: customerName,
                 decoration: const InputDecoration(labelText: 'اسم العميل'),
               ),
-              DropdownButtonFormField<String>(
-                initialValue: selectedProductId,
-                decoration: const InputDecoration(labelText: 'المنتج'),
-                items: [
-                  for (final product in products)
-                    DropdownMenuItem(
-                      value: product['id']?.toString(),
-                      child: Text(_productLabel(product)),
-                    ),
-                ],
-                onChanged: (value) => setState(() => selectedProductId = value),
+              TextField(
+                controller: customerPhone,
+                decoration: const InputDecoration(labelText: 'جوال العميل'),
               ),
               TextField(
-                controller: quantity,
-                decoration: const InputDecoration(labelText: 'الكمية'),
-                keyboardType: TextInputType.number,
+                controller: customerAddress,
+                decoration: const InputDecoration(labelText: 'عنوان العميل'),
               ),
               TextField(
-                controller: unitPrice,
-                decoration: const InputDecoration(labelText: 'السعر'),
-                keyboardType: TextInputType.number,
+                controller: notes,
+                decoration: const InputDecoration(labelText: 'ملاحظات'),
+                minLines: 1,
+                maxLines: 3,
+              ),
+              const SizedBox(height: 16),
+              Text('المنتجات', style: Theme.of(context).textTheme.titleMedium),
+              const SizedBox(height: 8),
+              for (var index = 0; index < lines.length; index++)
+                _OrderLineEditor(
+                  key: ValueKey(lines[index]),
+                  line: lines[index],
+                  products: products,
+                  canRemove: lines.length > 1,
+                  onChanged: () => setState(() {}),
+                  onRemove: () => setState(() => lines.removeAt(index)),
+                ),
+              Align(
+                alignment: AlignmentDirectional.centerStart,
+                child: TextButton.icon(
+                  onPressed: products.isEmpty
+                      ? null
+                      : () => setState(() => lines.add(_OrderLine())),
+                  icon: const Icon(Icons.add),
+                  label: const Text('إضافة منتج'),
+                ),
+              ),
+              Text(
+                'الإجمالي: ${_total().toStringAsFixed(2)}',
+                style: Theme.of(context).textTheme.titleMedium,
               ),
               if (error != null)
                 Padding(
@@ -97,9 +116,23 @@ class _CreateOrderScreenState extends ConsumerState<CreateOrderScreen> {
                   child: Text(error!, textAlign: TextAlign.center),
                 ),
               const SizedBox(height: 16),
-              FilledButton(
-                onPressed: loading || products.isEmpty ? null : submit,
-                child: const Text('حفظ كمسودة'),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  FilledButton(
+                    onPressed: loading || products.isEmpty
+                        ? null
+                        : () => submit(sendForApproval: false),
+                    child: const Text('حفظ كمسودة'),
+                  ),
+                  FilledButton.tonal(
+                    onPressed: loading || products.isEmpty
+                        ? null
+                        : () => submit(sendForApproval: true),
+                    child: const Text('إرسال للاعتماد'),
+                  ),
+                ],
               ),
             ],
           );
@@ -108,7 +141,7 @@ class _CreateOrderScreenState extends ConsumerState<CreateOrderScreen> {
     );
   }
 
-  Future<void> submit() async {
+  Future<void> submit({required bool sendForApproval}) async {
     setState(() {
       loading = true;
       error = null;
@@ -117,14 +150,25 @@ class _CreateOrderScreenState extends ConsumerState<CreateOrderScreen> {
       final order = await ref.read(backendRepositoryProvider).createOrder({
         'branchId': branchId.text.trim(),
         'customerName': customerName.text.trim(),
+        if (customerPhone.text.trim().isNotEmpty)
+          'customerPhone': customerPhone.text.trim(),
+        if (customerAddress.text.trim().isNotEmpty)
+          'customerAddress': customerAddress.text.trim(),
+        if (notes.text.trim().isNotEmpty) 'notes': notes.text.trim(),
         'items': [
-          {
-            'productId': selectedProductId,
-            'quantity': num.tryParse(quantity.text) ?? 1,
-            'unitPrice': num.tryParse(unitPrice.text) ?? 0,
-          },
+          for (final line in lines)
+            {
+              'productId': line.productId,
+              'quantity': line.quantity,
+              'unitPrice': line.unitPrice,
+            },
         ],
       });
+      if (sendForApproval) {
+        await ref
+            .read(backendRepositoryProvider)
+            .submitOrder(order['id'].toString());
+      }
       if (mounted) context.go('/orders/${order['id']}');
     } on ApiException catch (exception) {
       setState(() => error = exception.error.supportMessage);
@@ -132,6 +176,9 @@ class _CreateOrderScreenState extends ConsumerState<CreateOrderScreen> {
       if (mounted) setState(() => loading = false);
     }
   }
+
+  num _total() =>
+      lines.fold<num>(0, (sum, line) => sum + (line.quantity * line.unitPrice));
 }
 
 String _productLabel(Map<String, Object?> product) =>
@@ -140,4 +187,106 @@ String _productLabel(Map<String, Object?> product) =>
 String _errorMessage(Object? error) {
   if (error is ApiException) return error.error.supportMessage;
   return 'تعذر تحميل المنتجات';
+}
+
+class _OrderLine {
+  String? productId;
+  final quantityController = TextEditingController(text: '1');
+  final unitPriceController = TextEditingController(text: '10');
+
+  num get quantity => num.tryParse(quantityController.text) ?? 1;
+  num get unitPrice => num.tryParse(unitPriceController.text) ?? 0;
+
+  void ensureProduct(List<Map<String, Object?>> products) {
+    if (products.isEmpty) return;
+    final exists = products.any(
+      (product) => product['id']?.toString() == productId,
+    );
+    if (!exists) {
+      setProduct(products.first);
+    }
+  }
+
+  void setProduct(Map<String, Object?> product) {
+    productId = product['id']?.toString();
+    final price =
+        product['price'] ?? product['defaultPrice'] ?? product['unitPrice'];
+    if (price != null) unitPriceController.text = price.toString();
+  }
+}
+
+class _OrderLineEditor extends StatelessWidget {
+  const _OrderLineEditor({
+    required this.line,
+    required this.products,
+    required this.canRemove,
+    required this.onChanged,
+    required this.onRemove,
+    super.key,
+  });
+
+  final _OrderLine line;
+  final List<Map<String, Object?>> products;
+  final bool canRemove;
+  final VoidCallback onChanged;
+  final VoidCallback onRemove;
+
+  @override
+  Widget build(BuildContext context) {
+    return Card(
+      margin: const EdgeInsets.only(bottom: 8),
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          children: [
+            DropdownButtonFormField<String>(
+              initialValue: line.productId,
+              decoration: const InputDecoration(labelText: 'المنتج'),
+              items: [
+                for (final product in products)
+                  DropdownMenuItem(
+                    value: product['id']?.toString(),
+                    child: Text(_productLabel(product)),
+                  ),
+              ],
+              onChanged: (value) {
+                final product = products.firstWhere(
+                  (item) => item['id']?.toString() == value,
+                  orElse: () => products.first,
+                );
+                line.setProduct(product);
+                onChanged();
+              },
+            ),
+            Row(
+              children: [
+                Expanded(
+                  child: TextField(
+                    controller: line.quantityController,
+                    decoration: const InputDecoration(labelText: 'الكمية'),
+                    keyboardType: TextInputType.number,
+                    onChanged: (_) => onChanged(),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: TextField(
+                    controller: line.unitPriceController,
+                    decoration: const InputDecoration(labelText: 'السعر'),
+                    keyboardType: TextInputType.number,
+                    onChanged: (_) => onChanged(),
+                  ),
+                ),
+                IconButton(
+                  tooltip: 'حذف المنتج',
+                  onPressed: canRemove ? onRemove : null,
+                  icon: const Icon(Icons.delete_outline),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 }
