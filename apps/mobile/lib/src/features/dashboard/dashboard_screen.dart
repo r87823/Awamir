@@ -47,6 +47,8 @@ class DashboardScreen extends ConsumerWidget {
         'admin.users.view',
         'admin.users.manage',
         'admin.roles.view',
+        'admin.erpnext.view',
+        'admin.erpnext.products_sync',
       ]),
     ];
     return AwamirScaffold(

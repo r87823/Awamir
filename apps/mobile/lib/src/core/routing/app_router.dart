@@ -3,6 +3,7 @@ import 'package:go_router/go_router.dart';
 
 import '../../features/accounting/accounting_dashboard_screen.dart';
 import '../../features/admin/admin_dashboard_screen.dart';
+import '../../features/admin/admin_erpnext_products_sync_screen.dart';
 import '../../features/admin/admin_user_form_screen.dart';
 import '../../features/admin/admin_users_screen.dart';
 import '../../features/cashbox/cashbox_today_screen.dart';
@@ -109,6 +110,10 @@ GoRouter createAppRouter(AuthController auth) {
         builder: (context, state) => const AdminDashboardScreen(),
       ),
       GoRoute(
+        path: '/admin/erpnext-products',
+        builder: (context, state) => const AdminERPNextProductsSyncScreen(),
+      ),
+      GoRoute(
         path: '/admin/users',
         builder: (context, state) => const AdminUsersScreen(),
       ),
@@ -142,7 +147,17 @@ const routePermissions = <String, List<String>>{
     'reports.view_financials',
     'reports.view_erpnext',
   ],
-  '/admin': ['admin.users.view', 'admin.users.manage', 'admin.roles.view'],
+  '/admin': [
+    'admin.users.view',
+    'admin.users.manage',
+    'admin.roles.view',
+    'admin.erpnext.view',
+    'admin.erpnext.products_sync',
+  ],
+  '/admin/erpnext-products': [
+    'admin.erpnext.view',
+    'admin.erpnext.products_sync',
+  ],
   '/admin/users': ['admin.users.view'],
   '/admin/users/new': ['admin.users.manage'],
   '/admin/users/:id': ['admin.users.view'],

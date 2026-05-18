@@ -38,6 +38,21 @@ class AdminDashboardScreen extends StatelessWidget {
               ),
             ),
           ),
+          PermissionGuard(
+            permissions: const [
+              'admin.erpnext.view',
+              'admin.erpnext.products_sync',
+            ],
+            child: Card(
+              child: ListTile(
+                leading: const Icon(Icons.sync),
+                title: const Text('مزامنة منتجات ERPNext'),
+                subtitle: const Text('استيراد الأصناف إلى منتجات Awamir'),
+                trailing: const Icon(Icons.chevron_left),
+                onTap: () => context.go('/admin/erpnext-products'),
+              ),
+            ),
+          ),
         ],
       ),
     );

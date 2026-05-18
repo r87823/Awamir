@@ -10,6 +10,7 @@ import 'package:awamir_plus_mobile/src/core/auth/session.dart';
 import 'package:awamir_plus_mobile/src/core/auth/session_store.dart';
 import 'package:awamir_plus_mobile/src/core/providers.dart';
 import 'package:awamir_plus_mobile/src/core/routing/app_router.dart';
+import 'package:awamir_plus_mobile/src/features/admin/admin_erpnext_products_sync_screen.dart';
 import 'package:awamir_plus_mobile/src/features/admin/admin_user_form_screen.dart';
 import 'package:awamir_plus_mobile/src/features/dashboard/dashboard_screen.dart';
 import 'package:awamir_plus_mobile/src/features/login/change_password_screen.dart';
@@ -365,6 +366,112 @@ void main() {
     expect(find.text('الإدارة'), findsOneWidget);
   });
 
+  testWidgets(
+    'dashboard shows admin tile with ERPNext product sync permission',
+    (tester) async {
+      final auth = AuthController(MemorySessionStore());
+      await auth.setSession(
+        const UserSession(
+          token: 'token',
+          actorId: 'actor',
+          displayName: 'مدير',
+          permissions: {'admin.erpnext.products_sync'},
+        ),
+      );
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            authControllerProvider.overrideWithValue(auth),
+            backendRepositoryProvider.overrideWithValue(FakeOrdersRepository()),
+          ],
+          child: const MaterialApp(
+            home: Directionality(
+              textDirection: TextDirection.rtl,
+              child: DashboardScreen(),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('الإدارة'), findsOneWidget);
+    },
+  );
+
+  testWidgets('admin ERPNext products sync dry run submits safely', (
+    tester,
+  ) async {
+    final repo = FakeAdminRepository();
+    final auth = AuthController(MemorySessionStore());
+    await auth.setSession(
+      const UserSession(
+        token: 'token',
+        actorId: 'actor',
+        displayName: 'مدير',
+        permissions: {'admin.erpnext.products_sync'},
+      ),
+    );
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          authControllerProvider.overrideWithValue(auth),
+          backendRepositoryProvider.overrideWithValue(repo),
+        ],
+        child: const MaterialApp(
+          home: Directionality(
+            textDirection: TextDirection.rtl,
+            child: AdminERPNextProductsSyncScreen(),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('تجربة المزامنة'));
+    await tester.pumpAndSettle();
+
+    expect(repo.syncedProductsBody?['dryRun'], isTrue);
+    expect(repo.syncedProductsBody?['limit'], 50);
+    expect(find.text('نتيجة التجربة'), findsOneWidget);
+    expect(find.textContaining('ERP-ITEM-1'), findsOneWidget);
+  });
+
+  testWidgets(
+    'admin ERPNext products screen is read-only without sync permission',
+    (tester) async {
+      final auth = AuthController(MemorySessionStore());
+      await auth.setSession(
+        const UserSession(
+          token: 'token',
+          actorId: 'actor',
+          displayName: 'مدير',
+          permissions: {'admin.erpnext.view'},
+        ),
+      );
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            authControllerProvider.overrideWithValue(auth),
+            backendRepositoryProvider.overrideWithValue(FakeAdminRepository()),
+          ],
+          child: const MaterialApp(
+            home: Directionality(
+              textDirection: TextDirection.rtl,
+              child: AdminERPNextProductsSyncScreen(),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('مزامنة منتجات ERPNext'), findsOneWidget);
+      expect(
+        find.textContaining('تحتاج صلاحية مزامنة المنتجات'),
+        findsOneWidget,
+      );
+      expect(find.text('تجربة المزامنة'), findsNothing);
+    },
+  );
+
   testWidgets('admin create user form validates required fields', (
     tester,
   ) async {
@@ -604,6 +711,7 @@ class FakeAdminRepository extends FakeOrdersRepository {
   final bool failCreate;
   Map<String, Object?>? createdBody;
   String? assignedRoleId;
+  Map<String, Object?>? syncedProductsBody;
 
   @override
   Future<List<Map<String, Object?>>> adminBranches() async {
@@ -658,5 +766,33 @@ class FakeAdminRepository extends FakeOrdersRepository {
   ) async {
     assignedRoleId = roleId;
     return {'id': userId, 'roleId': roleId};
+  }
+
+  @override
+  Future<Map<String, Object?>> syncERPNextProducts({
+    int limit = 50,
+    String? itemGroup,
+    bool dryRun = true,
+  }) async {
+    syncedProductsBody = {
+      'limit': limit,
+      'itemGroup': itemGroup,
+      'dryRun': dryRun,
+    };
+    return {
+      'dryRun': dryRun,
+      'fetched': 1,
+      'created': dryRun ? 1 : 0,
+      'updated': dryRun ? 0 : 1,
+      'skipped': 0,
+      'results': [
+        {
+          'erpnextItemCode': 'ERP-ITEM-1',
+          'code': 'ERP_ITEM_1',
+          'action': dryRun ? 'created' : 'updated',
+          'productId': 'product-1',
+        },
+      ],
+    };
   }
 }

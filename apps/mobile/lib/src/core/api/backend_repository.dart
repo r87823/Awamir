@@ -288,6 +288,22 @@ class BackendRepository {
   ) {
     return _api.post('/admin/users/$userId/roles', data: {'roleId': roleId});
   }
+
+  Future<Map<String, Object?>> syncERPNextProducts({
+    int limit = 50,
+    String? itemGroup,
+    bool dryRun = true,
+  }) {
+    return _api.post(
+      '/admin/erpnext/products/sync',
+      data: {
+        'limit': limit,
+        'dryRun': dryRun,
+        if (itemGroup != null && itemGroup.trim().isNotEmpty)
+          'itemGroup': itemGroup.trim(),
+      },
+    );
+  }
 }
 
 List<Map<String, Object?>> listFromResponse(Map<String, Object?> response) {
