@@ -13,6 +13,7 @@ import { AuthService } from '../auth/auth.service';
 import { hashPassword } from '../auth/password-policy';
 import { normalizePagination } from '../common/pagination';
 import { ERPNextSyncService } from '../erpnext/erpnext-sync.service';
+import { ERPNextClient } from '../erpnext/erpnext.client';
 import { redactERPNextPayload } from '../erpnext/erpnext-redaction';
 import { PrismaService } from '../prisma/prisma.service';
 import {
@@ -26,6 +27,7 @@ import {
   AdminUsersQuery,
   AssignUserRoleDto,
   CreateAdminUserDto,
+  SyncERPNextProductsDto,
   UpdateAdminUserDto,
   UpdateAppSettingDto,
 } from './admin.types';
@@ -40,6 +42,7 @@ export class AdminService {
     private readonly auth: AuthService,
     private readonly rateLimiter: AuthRateLimiter,
     private readonly erpnextSync: ERPNextSyncService,
+    private readonly erpnextClient: ERPNextClient,
   ) {}
 
   async listUsers(query: AdminUsersQuery = {}) {
@@ -472,6 +475,133 @@ export class AdminService {
     return outbox;
   }
 
+  async syncERPNextProducts(input: SyncERPNextProductsDto, actor: AdminActor) {
+    const limit = normalizeSyncLimit(input.limit);
+    const dryRun = input.dryRun === true;
+    const items = await this.fetchERPNextItems(input.itemGroup, limit);
+    const results: Array<{
+      erpnextItemCode: string;
+      code: string;
+      action: 'created' | 'updated' | 'skipped';
+      productId?: string;
+      reason?: string;
+    }> = [];
+
+    for (const item of items) {
+      const normalized = normalizeERPNextItem(item);
+      if (!normalized) {
+        results.push({
+          erpnextItemCode: String(item.name ?? item.item_code ?? 'unknown'),
+          code: String(item.item_code ?? item.name ?? 'unknown'),
+          action: 'skipped',
+          reason: 'missing_item_code_or_name',
+        });
+        continue;
+      }
+      const existing = await this.prisma.product.findFirst({
+        where: {
+          OR: [
+            { erpnextItemCode: normalized.erpnextItemCode },
+            { code: normalized.code },
+          ],
+        },
+        select: { id: true, deletedAt: true },
+      });
+      if (dryRun) {
+        results.push({
+          erpnextItemCode: normalized.erpnextItemCode,
+          code: normalized.code,
+          action: existing && !existing.deletedAt ? 'updated' : 'created',
+          productId: existing?.id,
+        });
+        continue;
+      }
+      if (existing?.deletedAt) {
+        results.push({
+          erpnextItemCode: normalized.erpnextItemCode,
+          code: normalized.code,
+          action: 'skipped',
+          productId: existing.id,
+          reason: 'soft_deleted_product_exists',
+        });
+        continue;
+      }
+      const product = existing
+        ? await this.prisma.product.update({
+            where: { id: existing.id },
+            data: { ...normalized, version: { increment: 1 } },
+          })
+        : await this.prisma.product.create({ data: normalized });
+      results.push({
+        erpnextItemCode: normalized.erpnextItemCode,
+        code: normalized.code,
+        action: existing ? 'updated' : 'created',
+        productId: product.id,
+      });
+    }
+
+    const summary = {
+      dryRun,
+      itemGroup: input.itemGroup ?? null,
+      fetched: items.length,
+      created: results.filter((row) => row.action === 'created').length,
+      updated: results.filter((row) => row.action === 'updated').length,
+      skipped: results.filter((row) => row.action === 'skipped').length,
+      results,
+    };
+    await this.audit.record({
+      action: 'admin.erpnext.products_synced',
+      actorId: actor.actorId,
+      entityType: 'product',
+      payload: {
+        dryRun,
+        itemGroup: input.itemGroup ?? null,
+        fetched: summary.fetched,
+        created: summary.created,
+        updated: summary.updated,
+        skipped: summary.skipped,
+      },
+    });
+    return summary;
+  }
+
+  private async fetchERPNextItems(
+    itemGroup: string | undefined,
+    limit: number,
+  ) {
+    const fields = [
+      'name',
+      'item_code',
+      'item_name',
+      'item_group',
+      'stock_uom',
+      'is_stock_item',
+      'disabled',
+    ];
+    const filters = itemGroup
+      ? [['Item', 'item_group', '=', itemGroup]]
+      : undefined;
+    const params = new URLSearchParams({
+      fields: JSON.stringify(fields),
+      limit_page_length: String(limit),
+    });
+    if (filters) params.set('filters', JSON.stringify(filters));
+    const response = await this.erpnextClient.request({
+      method: 'GET',
+      path: `/api/resource/Item?${params.toString()}`,
+    });
+    if (!response.ok) {
+      throw new BadRequestException({
+        code: 'ERPNEXT_ITEM_SYNC_FAILED',
+        message: 'Failed to fetch ERPNext items',
+        details: { status: response.status, errorCode: response.errorCode },
+      });
+    }
+    const body = response.body as { data?: unknown };
+    if (!Array.isArray(body?.data)) return [];
+    return body.data.filter(isRecord);
+  }
+
   private async ensureUser(id: string) {
     const user = await this.prisma.user.findFirst({
       where: { id, deletedAt: null },
@@ -608,6 +738,61 @@ function normalizedOptionalString(value: unknown) {
     });
   }
   return value.trim();
+}
+
+type ERPNextItemRecord = Record<string, unknown>;
+
+function isRecord(value: unknown): value is ERPNextItemRecord {
+  return !!value && typeof value === 'object' && !Array.isArray(value);
+}
+
+function normalizeERPNextItem(item: ERPNextItemRecord) {
+  const itemCode = stringValue(item.item_code ?? item.name);
+  const itemName = stringValue(item.item_name ?? itemCode);
+  if (!itemCode || !itemName) return null;
+  return {
+    code: normalizeProductCode(itemCode),
+    nameAr: itemName,
+    nameEn: itemName,
+    erpnextItemCode: itemCode,
+    itemGroup: stringValue(item.item_group),
+    stockUom: stringValue(item.stock_uom),
+    isStockItem: booleanish(item.is_stock_item, true),
+    isActive: !booleanish(item.disabled, false),
+  };
+}
+
+function normalizeProductCode(value: string) {
+  return value
+    .trim()
+    .toUpperCase()
+    .replace(/[^A-Z0-9_-]+/g, '_')
+    .slice(0, 64);
+}
+
+function stringValue(value: unknown) {
+  if (typeof value !== 'string') return undefined;
+  const trimmed = value.trim();
+  return trimmed || undefined;
+}
+
+function booleanish(value: unknown, fallback: boolean) {
+  if (typeof value === 'boolean') return value;
+  if (typeof value === 'number') return value !== 0;
+  if (typeof value === 'string') return value === '1' || value === 'true';
+  return fallback;
+}
+
+function normalizeSyncLimit(value: unknown) {
+  if (value === undefined || value === null) return 100;
+  const limit = Number(value);
+  if (!Number.isInteger(limit) || limit < 1 || limit > 500) {
+    throw new BadRequestException({
+      code: 'ADMIN_INVALID_SYNC_LIMIT',
+      message: 'ERPNext product sync limit must be between 1 and 500',
+    });
+  }
+  return limit;
 }
 
 async function replaceScopes(

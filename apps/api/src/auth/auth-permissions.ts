@@ -53,6 +53,7 @@ export const allOperationalPermissions = [
   'admin.master_data.manage',
   'admin.erpnext.view',
   'admin.erpnext.retry',
+  'admin.erpnext.products_sync',
   'admin.reports.view',
 ] as const;
 

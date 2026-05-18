@@ -4,11 +4,13 @@ import { ERPNextSyncOperation } from '@prisma/client';
 import request from 'supertest';
 import { seedAuthData, seedMasterData } from '../prisma/seed';
 import { AppModule } from '../src/app.module';
+import { ERPNextClient } from '../src/erpnext/erpnext.client';
 import { PrismaService } from '../src/prisma/prisma.service';
 
 describe('Admin management foundation (e2e)', () => {
   let app: INestApplication;
   let prisma: PrismaService;
+  let erpnextClient: ERPNextClient;
   let platformAdminRoleId: string;
   let branchId: string;
 
@@ -20,6 +22,7 @@ describe('Admin management foundation (e2e)', () => {
     app = moduleRef.createNestApplication();
     await app.init();
     prisma = app.get(PrismaService);
+    erpnextClient = app.get(ERPNextClient);
     await seedMasterData(prisma);
     await seedAuthData(prisma);
     platformAdminRoleId = (
@@ -436,6 +439,89 @@ describe('Admin management foundation (e2e)', () => {
       .expect(({ body }) => expect(body.retryCount).toBe(1));
   });
 
+  it('syncs ERPNext items into Awamir products without exposing ERPNext to Flutter', async () => {
+    const spy = jest.spyOn(erpnextClient, 'request').mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      durationMs: 1,
+      body: {
+        data: [
+          {
+            name: 'ERP-ADMIN-SYNC-ITEM',
+            item_code: 'ERP-ADMIN-SYNC-ITEM',
+            item_name: 'Admin Sync Item',
+            item_group: 'Awamir Test',
+            stock_uom: 'Nos',
+            is_stock_item: 1,
+            disabled: 0,
+          },
+        ],
+      },
+    });
+
+    await request(app.getHttpServer())
+      .post('/admin/erpnext/products/sync')
+      .set('x-permissions', 'admin.erpnext.products_sync')
+      .set('x-actor-id', 'admin-e2e')
+      .send({ dryRun: true, limit: 10 })
+      .expect(201)
+      .expect(({ body }) => {
+        expect(body).toEqual(
+          expect.objectContaining({
+            dryRun: true,
+            fetched: 1,
+            created: 1,
+            updated: 0,
+            skipped: 0,
+          }),
+        );
+      });
+    expect(
+      await prisma.product.findUnique({
+        where: { erpnextItemCode: 'ERP-ADMIN-SYNC-ITEM' },
+      }),
+    ).toBeNull();
+    expect(spy).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        method: 'GET',
+        path: expect.stringContaining('/api/resource/Item?'),
+      }),
+    );
+
+    spy.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      durationMs: 1,
+      body: {
+        data: [
+          {
+            name: 'ERP-ADMIN-SYNC-ITEM',
+            item_code: 'ERP-ADMIN-SYNC-ITEM',
+            item_name: 'Admin Sync Item',
+            item_group: 'Awamir Test',
+            stock_uom: 'Nos',
+            is_stock_item: 1,
+            disabled: 0,
+          },
+        ],
+      },
+    });
+    const synced = await request(app.getHttpServer())
+      .post('/admin/erpnext/products/sync')
+      .set('x-permissions', 'admin.erpnext.products_sync')
+      .set('x-actor-id', 'admin-e2e')
+      .send({ limit: 10 })
+      .expect(201);
+    expect(synced.body.created).toBe(1);
+    const product = await prisma.product.findUniqueOrThrow({
+      where: { erpnextItemCode: 'ERP-ADMIN-SYNC-ITEM' },
+    });
+    expect(product.code).toBe('ERP-ADMIN-SYNC-ITEM');
+    expect(product.nameAr).toBe('Admin Sync Item');
+
+    spy.mockRestore();
+  });
+
   it('splits master data read and manage permissions while keeping legacy manage compatibility', async () => {
     await request(app.getHttpServer())
       .get('/admin/departments')
@@ -480,6 +566,9 @@ async function deleteAdminTestData(prisma: PrismaService) {
   });
   await prisma.integrationOutbox.deleteMany({
     where: { idempotencyKey: 'admin-e2e-outbox' },
+  });
+  await prisma.product.deleteMany({
+    where: { erpnextItemCode: 'ERP-ADMIN-SYNC-ITEM' },
   });
   await prisma.appSetting.deleteMany({
     where: { key: { in: ['ENABLE_PACKING_STAGE'] } },

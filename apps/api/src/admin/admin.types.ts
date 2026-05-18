@@ -54,6 +54,12 @@ export type UpdateAppSettingDto = {
   value: unknown;
 };
 
+export type SyncERPNextProductsDto = {
+  itemGroup?: string;
+  limit?: number;
+  dryRun?: boolean;
+};
+
 export type AdminSettingDefinition = {
   key: string;
   valueType: AppSettingValueType;

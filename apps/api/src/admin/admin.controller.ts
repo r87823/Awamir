@@ -21,6 +21,7 @@ import {
   AdminUsersQuery,
   AssignUserRoleDto,
   CreateAdminUserDto,
+  SyncERPNextProductsDto,
   UpdateAdminUserDto,
   UpdateAppSettingDto,
 } from './admin.types';
@@ -152,6 +153,18 @@ export class AdminController {
   @RequirePermissions('admin.erpnext.retry')
   retryERPNextOutbox(@Param('id') id: string, @Req() request: Request) {
     return this.admin.retryOutbox(id, adminActorFromRequest(request));
+  }
+
+  @Post('erpnext/products/sync')
+  @RequirePermissions('admin.erpnext.products_sync')
+  syncERPNextProducts(
+    @Body() body: SyncERPNextProductsDto,
+    @Req() request: Request,
+  ) {
+    return this.admin.syncERPNextProducts(
+      body ?? {},
+      adminActorFromRequest(request),
+    );
   }
 }
 
